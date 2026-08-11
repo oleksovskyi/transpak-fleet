@@ -1,0 +1,19 @@
+{
+  "name": "transpak-fleet-sync-service",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.18.0",
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.15",
+    "@types/node-cron": "^3.0.11"
+  }
+}

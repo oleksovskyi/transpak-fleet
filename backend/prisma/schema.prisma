@@ -1,0 +1,183 @@
+// Схема БД Transpak Fleet
+// Див. docs/wialon-integration-plan.md розділ 5 для пояснення моделі ТО
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  admin
+  viewer
+}
+
+enum TruckStatus {
+  trip
+  free
+  service
+  repair
+}
+
+enum RepairType {
+  planned
+  unplanned
+}
+
+enum RepairStatus {
+  in_progress
+  done
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(viewer)
+  telegramChatId String? // заповнюється після /start CODE у боті
+  createdAt    DateTime @default(now())
+  notifications Notification[]
+}
+
+model Driver {
+  id         String  @id @default(uuid())
+  fullName   String
+  experienceYears Int?
+  trucks     Truck[]
+}
+
+model Truck {
+  id             String   @id @default(uuid())
+  plate          String   @unique
+  model          String
+  status         TruckStatus @default(free)
+  wialonUnitId   String?  @unique // мапінг на unit у Wialon
+  totalMileageKm Int      @default(0)
+  fuelNormL100km Float?
+  driverId       String?
+  driver         Driver?  @relation(fields: [driverId], references: [id])
+
+  maintenanceStatuses TruckMaintenanceStatus[]
+  overrides           TruckMaintenanceOverride[]
+  maintenanceLogs      MaintenanceLog[]
+  repairs              Repair[]
+  mileageLogs           MileageLog[]
+  fuelLogs               FuelLog[]
+  routeLogs               RouteLog[]
+}
+
+// Довідник видів регламентних робіт — редагується адміністратором через UI,
+// НЕ хардкодиться в коді. Дублює структуру MAINTENANCE_TYPES з фронтенд-прототипу.
+model MaintenanceType {
+  id            String  @id @default(uuid())
+  key           String  @unique
+  name          String
+  intervalKm    Int?
+  intervalDays  Int?
+  soonKm        Int     @default(0)
+  soonDays      Int     @default(0)
+  allowOverride Boolean @default(true)
+
+  truckStatuses TruckMaintenanceStatus[]
+  overrides     TruckMaintenanceOverride[]
+  logs          MaintenanceLog[]
+}
+
+// Поточний стан по парі (ТЗ, вид робіт) — коли востаннє виконано
+model TruckMaintenanceStatus {
+  id                String   @id @default(uuid())
+  truckId           String
+  truck             Truck    @relation(fields: [truckId], references: [id])
+  maintenanceTypeId String
+  maintenanceType   MaintenanceType @relation(fields: [maintenanceTypeId], references: [id])
+  lastDoneAtKm      Int?
+  lastDoneAtDate    DateTime?
+
+  @@unique([truckId, maintenanceTypeId])
+}
+
+// Індивідуальний виняток інтервалу для конкретного ТЗ (тільки якщо
+// maintenanceType.allowOverride === true)
+model TruckMaintenanceOverride {
+  id                String   @id @default(uuid())
+  truckId           String
+  truck             Truck    @relation(fields: [truckId], references: [id])
+  maintenanceTypeId String
+  maintenanceType   MaintenanceType @relation(fields: [maintenanceTypeId], references: [id])
+  overrideIntervalKm   Int?
+  overrideIntervalDays Int?
+
+  @@unique([truckId, maintenanceTypeId])
+}
+
+// Історія виконаних регламентних робіт
+model MaintenanceLog {
+  id                String   @id @default(uuid())
+  truckId           String
+  truck             Truck    @relation(fields: [truckId], references: [id])
+  maintenanceTypeId String
+  maintenanceType   MaintenanceType @relation(fields: [maintenanceTypeId], references: [id])
+  performedAtKm     Int?
+  performedAtDate   DateTime @default(now())
+  performedBy       String?
+  costUah           Float?
+  notes             String?
+}
+
+// Ремонти — окремо від регламентного ТО
+model Repair {
+  id           String       @id @default(uuid())
+  truckId      String
+  truck        Truck        @relation(fields: [truckId], references: [id])
+  type         RepairType
+  description  String
+  date         DateTime     @default(now())
+  downtimeDays Int?
+  costUah      Float?
+  status       RepairStatus @default(in_progress)
+}
+
+// Кеш телеметрії з Wialon — наповнюється sync-service, не напряму з фронтенду
+model MileageLog {
+  id      String   @id @default(uuid())
+  truckId String
+  truck   Truck    @relation(fields: [truckId], references: [id])
+  date    DateTime
+  km      Int
+
+  @@unique([truckId, date])
+}
+
+model FuelLog {
+  id           String   @id @default(uuid())
+  truckId      String
+  truck        Truck    @relation(fields: [truckId], references: [id])
+  date         DateTime
+  litersPer100km Float
+
+  @@unique([truckId, date])
+}
+
+model RouteLog {
+  id        String   @id @default(uuid())
+  truckId   String
+  truck     Truck    @relation(fields: [truckId], references: [id])
+  fromCity  String
+  toCity    String
+  distanceKm Int
+  date      DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  type      String   // maintenance_overdue | maintenance_soon | repair_status | sync_failure
+  text      String
+  createdAt DateTime @default(now())
+  readAt    DateTime?
+  sentToTelegram Boolean @default(false)
+}
