@@ -3,16 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch src/index.ts",
+    "sync:once": "tsx src/index.ts --once",
+    "mileage:once": "tsx src/index.ts --mileage-once",
+    "import-drivers": "tsx src/index.ts --import-drivers-once",
+    "prisma:generate": "prisma generate --schema=../backend/prisma/schema.prisma"
   },
   "dependencies": {
-    "@prisma/client": "^5.18.0",
     "dotenv": "^16.4.5",
     "node-cron": "^3.0.3"
   },
   "devDependencies": {
     "tsx": "^4.16.2",
     "typescript": "^5.5.4",
+    "prisma": "^5.18.0",
     "@types/node": "^20.14.15",
     "@types/node-cron": "^3.0.11"
   }

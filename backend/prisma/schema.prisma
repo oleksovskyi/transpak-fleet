@@ -56,6 +56,11 @@ model Truck {
   status         TruckStatus @default(free)
   wialonUnitId   String?  @unique // мапінг на unit у Wialon
   totalMileageKm Int      @default(0)
+  // "Калібрування" пробігу: адмін вручну вводить базове значення й момент часу.
+  // Між калібруваннями totalMileageKm = mileageBaselineKm + пробіг за Wialon-звітом
+  // від mileageBaselineAt до зараз (рахує sync-service). Новий ручний ввід скидає базу.
+  mileageBaselineKm Int?
+  mileageBaselineAt DateTime?
   fuelNormL100km Float?
   driverId       String?
   driver         Driver?  @relation(fields: [driverId], references: [id])
