@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { apiFetch, ApiError } from '../lib/api';
 import { useDialog } from '../lib/dialog';
 import { MaintenanceType } from '../types';
@@ -91,6 +92,18 @@ export default function SettingsPage() {
         <div>
           <div className="page-title">Налаштування</div>
           <div className="page-sub">Довідник видів технічного обслуговування — доступно лише адміністратору</div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <div>
+            <div className="card-title">Первинне налаштування пробігу і ТО</div>
+            <div className="card-title-sub">
+              масове внесення реального пробігу та історії ТО по всьому парку — актуально і для нових ТЗ
+            </div>
+          </div>
+          <Link to="/setup" className="btn btn-primary">Відкрити таблицю →</Link>
         </div>
       </div>
 

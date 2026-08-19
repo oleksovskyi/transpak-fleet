@@ -6,6 +6,7 @@ import DashboardPage from './pages/DashboardPage';
 import FleetPage from './pages/FleetPage';
 import PlaceholderPage from './pages/PlaceholderPage';
 import SettingsPage from './pages/SettingsPage';
+import SetupPage from './pages/SetupPage';
 import DriversPage from './pages/DriversPage';
 import RepairsPage from './pages/RepairsPage';
 import RoutesPage from './pages/RoutesPage';
@@ -28,6 +29,7 @@ export default function App() {
           />
           <Route element={<RequireAdmin />}>
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/setup" element={<SetupPage />} />
           </Route>
         </Route>
       </Route>

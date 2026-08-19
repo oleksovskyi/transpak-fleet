@@ -20,9 +20,25 @@ maintenanceLogsRouter.post('/', requireAuth, requireAdmin, async (req: AuthedReq
   const truck = await prisma.truck.findUnique({ where: { id: truckId } });
   if (!truck) return res.status(404).json({ error: 'ТЗ не знайдено' });
 
+  // Опційне заднє число — для внесення реальної історії ТО (яке зроблено раніше,
+  // не сьогодні на поточному пробігу). Без цих полів поведінка як раніше:
+  // "виконано зараз, на поточному пробігу ТЗ".
+  const { performedAtKm: rawKm, performedAtDate: rawDate } = req.body;
+  if (rawKm !== undefined && rawKm !== null) {
+    if (typeof rawKm !== 'number' || rawKm < 0) {
+      return res.status(400).json({ error: 'Пробіг на момент ТО має бути невід’ємним числом' });
+    }
+    if (rawKm > truck.totalMileageKm) {
+      return res.status(400).json({ error: 'Пробіг на момент ТО не може перевищувати поточний пробіг ТЗ' });
+    }
+  }
+  if (rawDate !== undefined && rawDate !== null && Number.isNaN(new Date(rawDate).getTime())) {
+    return res.status(400).json({ error: 'Некоректна дата ТО' });
+  }
+
   const performedByUser = req.user ? await prisma.user.findUnique({ where: { id: req.user.id } }) : null;
-  const performedAtKm = truck.totalMileageKm;
-  const performedAtDate = new Date();
+  const performedAtKm = rawKm ?? truck.totalMileageKm;
+  const performedAtDate = rawDate ? new Date(rawDate) : new Date();
 
   try {
     await prisma.$transaction([
