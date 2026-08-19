@@ -1,4 +1,4 @@
-// Prisma-клієнт генерується від спільної схеми backend/prisma/schema.prisma
-// (npm run prisma:generate) і опиняється в backend/node_modules — sync-service
-// власного не тримає, щоб не дублювати схему.
-export { PrismaClient } from '../../backend/node_modules/@prisma/client';
+// Власний Prisma-клієнт sync-service, згенерований з prisma/schema.prisma (копія
+// backend/prisma/schema.prisma) — потрібен для самодостатнього деплою (без залежності
+// на сусідню директорію backend/).
+export { PrismaClient } from '@prisma/client';
