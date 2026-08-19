@@ -81,6 +81,12 @@ maintenanceTypesRouter.delete('/:id', requireAuth, requireAdmin, async (req, res
         return res.status(409).json({ error: 'Не можна видалити вид робіт, який вже використовується по ТЗ' });
       }
     }
+    // Postgres іноді повертає RESTRICT-порушення (23001) замість типового foreign-key
+    // коду (23503), який Prisma розпізнає як P2003 — тоді це PrismaClientUnknownRequestError,
+    // ловимо за текстом повідомлення, щоб не падати з 500 на легітимний бізнес-кейс.
+    if (err instanceof Error && /foreign key constraint/i.test(err.message)) {
+      return res.status(409).json({ error: 'Не можна видалити вид робіт, який вже використовується по ТЗ' });
+    }
     throw err;
   }
 });
