@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
     "sync:once": "tsx src/index.ts --once",
     "mileage:once": "tsx src/index.ts --mileage-once",
     "import-drivers": "tsx src/index.ts --import-drivers-once",
