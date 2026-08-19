@@ -12,7 +12,12 @@ const STATUS_COLOR: Record<TruckStatus, string> = {
   repair: '#c23b3b',
 };
 
-const DEPOT_CENTER: [number, number] = [24.0915, 49.3295];
+// Межі України (SW, NE) — карта початково показує всю країну, а не зміщується
+// в бік депо на заході й захоплює сусідні Польщу/Словаччину.
+const UKRAINE_BOUNDS: [[number, number], [number, number]] = [
+  [22.0, 44.2],
+  [40.3, 52.5],
+];
 
 function minutesAgo(iso: string): number {
   return Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
@@ -37,8 +42,8 @@ export default function FleetMap({ trucks }: { trucks: Truck[] }) {
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: 'https://tiles.openfreemap.org/styles/positron',
-      center: DEPOT_CENTER,
-      zoom: 6,
+      bounds: UKRAINE_BOUNDS,
+      fitBoundsOptions: { padding: 20 },
       scrollZoom: false,
       attributionControl: { compact: true },
     });
