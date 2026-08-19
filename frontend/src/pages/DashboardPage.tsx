@@ -1,5 +1,6 @@
 import { useTrucks } from '../lib/useTrucks';
 import { itemRemainingLabel, effectiveParams, truckMostUrgentItem, truckStatus } from '../lib/maintenanceStatus';
+import FleetMap from '../components/FleetMap';
 import { Truck, TruckStatus } from '../types';
 
 const today = new Date();
@@ -58,6 +59,8 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
+
+          <FleetMap trucks={trucks} />
 
           <div className="card">
             <div className="card-head">

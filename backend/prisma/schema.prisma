@@ -61,6 +61,10 @@ model Truck {
   // від mileageBaselineAt до зараз (рахує sync-service). Новий ручний ввід скидає базу.
   mileageBaselineKm Int?
   mileageBaselineAt DateTime?
+  // Остання відома позиція з Wialon (sync-service оновлює кожні 15 хв) — для карти автопарку.
+  lat               Float?
+  lon               Float?
+  positionUpdatedAt DateTime?
   fuelNormL100km Float?
   driverId       String?
   driver         Driver?  @relation(fields: [driverId], references: [id])

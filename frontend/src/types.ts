@@ -72,6 +72,9 @@ export interface Truck {
   status: TruckStatus;
   wialonUnitId: string | null;
   totalMileageKm: number;
+  lat: number | null;
+  lon: number | null;
+  positionUpdatedAt: string | null;
   fuelNormL100km: number | null;
   driverId: string | null;
   driver: Driver | null;

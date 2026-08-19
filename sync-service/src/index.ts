@@ -25,12 +25,16 @@ async function syncOnce() {
     // Wialon-лічильник 0 означає "не відкалібровано", а не "реально 0 км" — не затираємо
     // ані сам пробіг (може бути введений адміном вручну), ані пишемо фейковий MileageLog.
     const hasRealOdometer = unit.odometerKm > 0;
-    const atBase = distanceKm(unit.lat, unit.lon, DEPOT_LAT, DEPOT_LON) <= DEPOT_RADIUS_KM;
+    // lat/lon = 0,0 означає "Wialon не віддав позицію" (wialonClient підставляє 0 за
+    // відсутності item.pos) — не пишемо в БД, щоб ТЗ не "телепортувався" на Null Island.
+    const hasPosition = unit.lat !== 0 || unit.lon !== 0;
+    const atBase = hasPosition && distanceKm(unit.lat, unit.lon, DEPOT_LAT, DEPOT_LON) <= DEPOT_RADIUS_KM;
 
     await prisma.truck.update({
       where: { id: truck.id },
       data: {
         ...(hasRealOdometer ? { totalMileageKm: unit.odometerKm } : {}),
+        ...(hasPosition ? { lat: unit.lat, lon: unit.lon, positionUpdatedAt: new Date() } : {}),
         status: truck.status === 'repair' ? 'repair' : atBase ? 'free' : 'trip',
       },
     });

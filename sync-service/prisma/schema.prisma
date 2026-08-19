@@ -60,6 +60,9 @@ model Truck {
   totalMileageKm Int      @default(0)
   mileageBaselineKm Int?
   mileageBaselineAt DateTime?
+  lat               Float?
+  lon               Float?
+  positionUpdatedAt DateTime?
   fuelNormL100km Float?
   driverId       String?
   driver         Driver?  @relation(fields: [driverId], references: [id])

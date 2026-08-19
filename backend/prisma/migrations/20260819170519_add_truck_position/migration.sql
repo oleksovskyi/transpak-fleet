@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "Truck" ADD COLUMN     "lat" DOUBLE PRECISION,
+ADD COLUMN     "lon" DOUBLE PRECISION,
+ADD COLUMN     "positionUpdatedAt" TIMESTAMP(3);
