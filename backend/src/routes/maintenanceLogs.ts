@@ -17,8 +17,13 @@ maintenanceLogsRouter.post('/', requireAuth, requireAdmin, async (req: AuthedReq
     return res.status(400).json({ error: 'Оберіть вид робіт' });
   }
 
-  const truck = await prisma.truck.findUnique({ where: { id: truckId } });
+  const truck = await prisma.truck.findFirst({ where: { id: truckId, companyId: req.user!.companyId } });
   if (!truck) return res.status(404).json({ error: 'ТЗ не знайдено' });
+
+  const maintenanceType = await prisma.maintenanceType.findFirst({
+    where: { id: maintenanceTypeId, companyId: req.user!.companyId },
+  });
+  if (!maintenanceType) return res.status(400).json({ error: 'Такого виду робіт не існує' });
 
   // Опційне заднє число — для внесення реальної історії ТО (яке зроблено раніше,
   // не сьогодні на поточному пробігу). Без цих полів поведінка як раніше:

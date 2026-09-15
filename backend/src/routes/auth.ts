@@ -19,6 +19,10 @@ authRouter.post('/login', async (req, res) => {
     return res.status(401).json({ error: 'Невірний email або пароль' });
   }
 
-  const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
-  res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
+  const token = jwt.sign(
+    { id: user.id, role: user.role, companyId: user.companyId },
+    JWT_SECRET,
+    { expiresIn: '8h' },
+  );
+  res.json({ token, user: { id: user.id, email: user.email, role: user.role, companyId: user.companyId } });
 });

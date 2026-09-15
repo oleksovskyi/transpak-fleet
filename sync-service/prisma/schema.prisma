@@ -34,18 +34,37 @@ enum RepairStatus {
   done
 }
 
+// Клієнт платформи (транспортна компанія). Один Company = один орендар (tenant):
+// усі його користувачі, ТЗ та довідники бачать тільки свої дані.
+// Див. docs/wialon-integration-plan.md — мультитенантність.
+model Company {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  users            User[]
+  drivers          Driver[]
+  trucks           Truck[]
+  maintenanceTypes MaintenanceType[]
+  documentTypes    DocumentType[]
+}
+
 model User {
   id           String   @id @default(uuid())
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id])
   email        String   @unique
   passwordHash String
   role         Role     @default(viewer)
-  telegramChatId String?
+  telegramChatId String? // заповнюється після /start CODE у боті
   createdAt    DateTime @default(now())
   notifications Notification[]
 }
 
 model Driver {
   id         String  @id @default(uuid())
+  companyId  String
+  company    Company @relation(fields: [companyId], references: [id])
   fullName   String
   experienceYears Int?
   trucks     Truck[]
@@ -53,17 +72,23 @@ model Driver {
 
 model Truck {
   id             String   @id @default(uuid())
-  plate          String   @unique
+  companyId      String
+  company        Company  @relation(fields: [companyId], references: [id])
+  plate          String
   model          String
   status         TruckStatus @default(free)
-  wialonUnitId   String?  @unique
+  wialonUnitId   String?  // мапінг на unit у Wialon
   totalMileageKm Int      @default(0)
+  // "Калібрування" пробігу: адмін вручну вводить базове значення й момент часу.
+  // Між калібруваннями totalMileageKm = mileageBaselineKm + пробіг за Wialon-звітом
+  // від mileageBaselineAt до зараз (рахує sync-service). Новий ручний ввід скидає базу.
   mileageBaselineKm Int?
   mileageBaselineAt DateTime?
+  // Остання відома позиція з Wialon (sync-service оновлює кожні 15 хв) — для карти автопарку
+  // і статусу "На базі"/"В рейсі".
   lat               Float?
   lon               Float?
   positionUpdatedAt DateTime?
-  fuelNormL100km Float?
   driverId       String?
   driver         Driver?  @relation(fields: [driverId], references: [id])
 
@@ -72,13 +97,22 @@ model Truck {
   maintenanceLogs      MaintenanceLog[]
   repairs              Repair[]
   mileageLogs           MileageLog[]
-  fuelLogs               FuelLog[]
   routeLogs               RouteLog[]
+  documentStatuses         TruckDocumentStatus[]
+  documentOverrides        TruckDocumentOverride[]
+  documentLogs             DocumentLog[]
+
+  @@unique([companyId, plate])
+  @@unique([companyId, wialonUnitId])
 }
 
+// Довідник видів регламентних робіт — редагується адміністратором через UI,
+// НЕ хардкодиться в коді. Дублює структуру MAINTENANCE_TYPES з фронтенд-прототипу.
 model MaintenanceType {
   id            String  @id @default(uuid())
-  key           String  @unique
+  companyId     String
+  company       Company @relation(fields: [companyId], references: [id])
+  key           String
   name          String
   intervalKm    Int?
   intervalDays  Int?
@@ -89,8 +123,11 @@ model MaintenanceType {
   truckStatuses TruckMaintenanceStatus[]
   overrides     TruckMaintenanceOverride[]
   logs          MaintenanceLog[]
+
+  @@unique([companyId, key])
 }
 
+// Поточний стан по парі (ТЗ, вид робіт) — коли востаннє виконано
 model TruckMaintenanceStatus {
   id                String   @id @default(uuid())
   truckId           String
@@ -103,6 +140,8 @@ model TruckMaintenanceStatus {
   @@unique([truckId, maintenanceTypeId])
 }
 
+// Індивідуальний виняток інтервалу для конкретного ТЗ (тільки якщо
+// maintenanceType.allowOverride === true)
 model TruckMaintenanceOverride {
   id                String   @id @default(uuid())
   truckId           String
@@ -115,6 +154,7 @@ model TruckMaintenanceOverride {
   @@unique([truckId, maintenanceTypeId])
 }
 
+// Історія виконаних регламентних робіт
 model MaintenanceLog {
   id                String   @id @default(uuid())
   truckId           String
@@ -128,6 +168,7 @@ model MaintenanceLog {
   notes             String?
 }
 
+// Ремонти — окремо від регламентного ТО
 model Repair {
   id           String       @id @default(uuid())
   truckId      String
@@ -140,22 +181,13 @@ model Repair {
   status       RepairStatus @default(in_progress)
 }
 
+// Кеш телеметрії з Wialon — наповнюється sync-service, не напряму з фронтенду
 model MileageLog {
   id      String   @id @default(uuid())
   truckId String
   truck   Truck    @relation(fields: [truckId], references: [id])
   date    DateTime
   km      Int
-
-  @@unique([truckId, date])
-}
-
-model FuelLog {
-  id           String   @id @default(uuid())
-  truckId      String
-  truck        Truck    @relation(fields: [truckId], references: [id])
-  date         DateTime
-  litersPer100km Float
 
   @@unique([truckId, date])
 }
@@ -168,13 +200,92 @@ model RouteLog {
   toCity    String
   distanceKm Int
   date      DateTime @default(now())
+  source    String   @default("manual") // "manual" | "auto" — вручну введено чи виявлено з GPS-треку
+
+  stops     RouteLogStop[]
+}
+
+// Розпізнані проміжні зупинки одного авто-виїзду, по порядку — те саме, що зараз
+// конкатенується текстом у RouteLog.toCity, але окремими рядками з координатами.
+// Потрібно для (1) точнішого групування "найчастіших маршрутів" — не по точному
+// збігу рядка toCity (Wialon по-різному сегментує той самий рейс між запусками
+// звіту), а по фактичних відвіданих точках, і (2) майбутнього накладання
+// маршруту на карту флоту. Пишеться лише для source: 'auto' (sync-service);
+// ручні записи RouteLog зупинок не мають.
+model RouteLogStop {
+  id         String   @id @default(uuid())
+  routeLogId String
+  routeLog   RouteLog @relation(fields: [routeLogId], references: [id], onDelete: Cascade)
+  seq        Int      // порядок зупинки в межах рейсу, 0-based
+  label      String   // назва точки — те саме, що зараз конкатенується в toCity
+  lat        Float
+  lon        Float
+
+  @@unique([routeLogId, seq])
+}
+
+// Довідник видів документів/дозволів (страховка, техогляд тощо) — та ж логіка, що й
+// MaintenanceType, але лише "днева" гілка: документи ніколи не залежать від пробігу.
+model DocumentType {
+  id            String  @id @default(uuid())
+  companyId     String
+  company       Company @relation(fields: [companyId], references: [id])
+  key           String
+  name          String
+  intervalDays  Int
+  soonDays      Int     @default(0)
+  allowOverride Boolean @default(true)
+
+  truckStatuses TruckDocumentStatus[]
+  overrides     TruckDocumentOverride[]
+  logs          DocumentLog[]
+
+  @@unique([companyId, key])
+}
+
+// Поточний стан по парі (ТЗ, вид документа) — коли востаннє оформлено/продовжено
+model TruckDocumentStatus {
+  id               String   @id @default(uuid())
+  truckId          String
+  truck            Truck    @relation(fields: [truckId], references: [id])
+  documentTypeId   String
+  documentType     DocumentType @relation(fields: [documentTypeId], references: [id])
+  lastIssuedAtDate DateTime?
+
+  @@unique([truckId, documentTypeId])
+}
+
+// Індивідуальний виняток терміну дії для конкретного ТЗ (тільки якщо
+// documentType.allowOverride === true)
+model TruckDocumentOverride {
+  id                   String   @id @default(uuid())
+  truckId              String
+  truck                Truck    @relation(fields: [truckId], references: [id])
+  documentTypeId       String
+  documentType         DocumentType @relation(fields: [documentTypeId], references: [id])
+  overrideIntervalDays Int
+
+  @@unique([truckId, documentTypeId])
+}
+
+// Історія оформлень/продовжень документів
+model DocumentLog {
+  id             String   @id @default(uuid())
+  truckId        String
+  truck          Truck    @relation(fields: [truckId], references: [id])
+  documentTypeId String
+  documentType   DocumentType @relation(fields: [documentTypeId], references: [id])
+  issuedAtDate   DateTime @default(now())
+  performedBy    String?
+  costUah        Float?
+  notes          String?
 }
 
 model Notification {
   id        String   @id @default(uuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id])
-  type      String
+  type      String   // maintenance_overdue | maintenance_soon | repair_status | sync_failure
   text      String
   createdAt DateTime @default(now())
   readAt    DateTime?

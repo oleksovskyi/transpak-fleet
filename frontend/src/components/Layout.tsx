@@ -46,6 +46,17 @@ const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
+    to: '/documents',
+    label: 'Документи й дозволи',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M7 3h7l5 5v13a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1z" />
+        <path d="M14 3v5h5" />
+        <path d="M9 13h6M9 17h6" />
+      </svg>
+    ),
+  },
+  {
     to: '/drivers',
     label: 'Водії',
     icon: (
@@ -63,19 +74,6 @@ const NAV_ITEMS: NavItem[] = [
         <circle cx="5" cy="6" r="2.3" />
         <circle cx="19" cy="18" r="2.3" />
         <path d="M6.8 7.6C10 11 13 9 15 12s0 3.4 2.2 4.4" />
-      </svg>
-    ),
-  },
-  {
-    to: '/fuel',
-    label: 'Паливо',
-    disabled: true,
-    hint: 'Розділ у розробці — з\'явиться найближчим часом',
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M4 21V6a2 2 0 012-2h6a2 2 0 012 2v15" />
-        <path d="M4 11h10" />
-        <path d="M14 8h2l3 3v5.5a1.5 1.5 0 01-3 0V15h-2" />
       </svg>
     ),
   },

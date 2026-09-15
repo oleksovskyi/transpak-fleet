@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Prisma, PrismaClient, RepairType } from '@prisma/client';
-import { requireAuth, requireAdmin } from '../middleware/auth';
+import { requireAuth, requireAdmin, AuthedRequest } from '../middleware/auth';
 
 const prisma = new PrismaClient();
 export const repairsRouter = Router();
@@ -19,8 +19,9 @@ async function syncTruckRepairStatus(truckId: string) {
 }
 
 // Читання доступне і admin, і viewer
-repairsRouter.get('/', requireAuth, async (_req, res) => {
+repairsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
   const repairs = await prisma.repair.findMany({
+    where: { truck: { companyId: req.user!.companyId } },
     orderBy: { date: 'desc' },
     include: { truck: { select: { id: true, plate: true, model: true } } },
   });
@@ -28,7 +29,7 @@ repairsRouter.get('/', requireAuth, async (_req, res) => {
 });
 
 // Мутуючі ендпоінти — лише admin
-repairsRouter.post('/', requireAuth, requireAdmin, async (req, res) => {
+repairsRouter.post('/', requireAuth, requireAdmin, async (req: AuthedRequest, res) => {
   const { truckId, type, description, date, downtimeDays, costUah } = req.body;
 
   if (!truckId || typeof truckId !== 'string') {
@@ -40,6 +41,9 @@ repairsRouter.post('/', requireAuth, requireAdmin, async (req, res) => {
   if (!description || typeof description !== 'string' || !description.trim()) {
     return res.status(400).json({ error: 'Вкажіть опис ремонту' });
   }
+
+  const truck = await prisma.truck.findFirst({ where: { id: truckId, companyId: req.user!.companyId } });
+  if (!truck) return res.status(400).json({ error: 'Такого ТЗ не існує' });
 
   try {
     const repair = await prisma.repair.create({
@@ -63,7 +67,7 @@ repairsRouter.post('/', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-repairsRouter.patch('/:id', requireAuth, requireAdmin, async (req, res) => {
+repairsRouter.patch('/:id', requireAuth, requireAdmin, async (req: AuthedRequest, res) => {
   const { type, description, date, downtimeDays, costUah, status } = req.body;
   if (type !== undefined && !REPAIR_TYPES.includes(type)) {
     return res.status(400).json({ error: 'Тип ремонту має бути "planned" або "unplanned"' });
@@ -71,6 +75,11 @@ repairsRouter.patch('/:id', requireAuth, requireAdmin, async (req, res) => {
   if (status !== undefined && status !== 'in_progress' && status !== 'done') {
     return res.status(400).json({ error: 'Статус має бути "in_progress" або "done"' });
   }
+
+  const existing = await prisma.repair.findFirst({
+    where: { id: req.params.id, truck: { companyId: req.user!.companyId } },
+  });
+  if (!existing) return res.status(404).json({ error: 'Ремонт не знайдено' });
 
   try {
     const repair = await prisma.repair.update({
@@ -95,7 +104,12 @@ repairsRouter.patch('/:id', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-repairsRouter.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
+repairsRouter.delete('/:id', requireAuth, requireAdmin, async (req: AuthedRequest, res) => {
+  const existing = await prisma.repair.findFirst({
+    where: { id: req.params.id, truck: { companyId: req.user!.companyId } },
+  });
+  if (!existing) return res.status(404).json({ error: 'Ремонт не знайдено' });
+
   try {
     const repair = await prisma.repair.delete({ where: { id: req.params.id } });
     await syncTruckRepairStatus(repair.truckId);

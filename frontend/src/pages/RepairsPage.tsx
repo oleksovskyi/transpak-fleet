@@ -103,89 +103,86 @@ export default function RepairsPage() {
         onChanged={refetchTrucks}
       />
 
-      {user?.role === 'admin' && (
-        <div className="card">
-          <div className="card-head">
-            <div className="card-title">Ремонти</div>
-            <button className="btn btn-primary" onClick={() => setFormOpen((v) => !v)}>
-              {formOpen ? 'Скасувати' : 'Додати ремонт'}
-            </button>
-          </div>
-
-          {formOpen && (
-            <form onSubmit={handleCreate} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-              {formError && <div className="login-error" style={{ width: '100%' }}>{formError}</div>}
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 }}>ТЗ</div>
-                <select value={form.truckId} onChange={(e) => setForm({ ...form, truckId: e.target.value })} style={{ width: 180 }}>
-                  <option value="">Оберіть ТЗ</option>
-                  {trucks.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.plate} · {t.model}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 }}>Тип</div>
-                <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as RepairType })} style={{ width: 130 }}>
-                  <option value="unplanned">Позаплановий</option>
-                  <option value="planned">Плановий</option>
-                </select>
-              </div>
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 }}>Опис</div>
-                <input
-                  type="text"
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  placeholder="напр. Заміна гальмівних дисків"
-                  style={{ width: 240 }}
-                />
-              </div>
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 }}>Дата</div>
-                <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
-              </div>
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 }}>Простій, днів</div>
-                <input
-                  type="number"
-                  value={form.downtimeDays}
-                  onChange={(e) => setForm({ ...form, downtimeDays: e.target.value })}
-                  placeholder="необов'язково"
-                  style={{ width: 130 }}
-                />
-              </div>
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 }}>Вартість, грн</div>
-                <input
-                  type="number"
-                  value={form.costUah}
-                  onChange={(e) => setForm({ ...form, costUah: e.target.value })}
-                  placeholder="необов'язково"
-                  style={{ width: 130 }}
-                />
-              </div>
-              <button className="btn btn-primary" type="submit" disabled={saving}>
-                {saving ? 'Збереження…' : 'Зберегти'}
-              </button>
-            </form>
-          )}
-        </div>
-      )}
-
       <div className="card">
         <div className="card-head">
-          {user?.role !== 'admin' && <div className="card-title">Ремонти</div>}
-          <div className="filters">
+          <div className="card-title">Ремонти</div>
+          <div className="filters" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as RepairType | 'all')}>
               <option value="all">Усі</option>
               <option value="planned">Планові</option>
               <option value="unplanned">Позапланові</option>
             </select>
+            {user?.role === 'admin' && (
+              <button className="btn btn-primary" onClick={() => setFormOpen((v) => !v)}>
+                {formOpen ? 'Скасувати' : 'Додати ремонт'}
+              </button>
+            )}
           </div>
         </div>
+
+        {user?.role === 'admin' && formOpen && (
+          <form
+            onSubmit={handleCreate}
+            style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 14 }}
+          >
+            {formError && <div className="login-error" style={{ width: '100%' }}>{formError}</div>}
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 }}>ТЗ</div>
+              <select value={form.truckId} onChange={(e) => setForm({ ...form, truckId: e.target.value })} style={{ width: 180 }}>
+                <option value="">Оберіть ТЗ</option>
+                {trucks.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.plate} · {t.model}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 }}>Тип</div>
+              <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as RepairType })} style={{ width: 130 }}>
+                <option value="unplanned">Позаплановий</option>
+                <option value="planned">Плановий</option>
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 }}>Опис</div>
+              <input
+                type="text"
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="напр. Заміна гальмівних дисків"
+                style={{ width: 240 }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 }}>Дата</div>
+              <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 }}>Простій, днів</div>
+              <input
+                type="number"
+                value={form.downtimeDays}
+                onChange={(e) => setForm({ ...form, downtimeDays: e.target.value })}
+                placeholder="необов'язково"
+                style={{ width: 130 }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 }}>Вартість, грн</div>
+              <input
+                type="number"
+                value={form.costUah}
+                onChange={(e) => setForm({ ...form, costUah: e.target.value })}
+                placeholder="необов'язково"
+                style={{ width: 130 }}
+              />
+            </div>
+            <button className="btn btn-primary" type="submit" disabled={saving}>
+              {saving ? 'Збереження…' : 'Зберегти'}
+            </button>
+          </form>
+        )}
 
         {error && <div className="empty">{error}</div>}
         {!error && loading && <div className="empty">Завантаження…</div>}

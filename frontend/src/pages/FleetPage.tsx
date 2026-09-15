@@ -14,20 +14,23 @@ import {
   TRUCK_STATUS_BADGE,
   TRUCK_STATUS_LABEL,
 } from '../lib/maintenanceStatus';
+import { effectiveDocumentParams, documentItemRemainingLabel, truckMostUrgentDocument, truckDocumentStatus } from '../lib/documentStatus';
 import { Truck, TruckStatus } from '../types';
 
-type SortBy = 'id' | 'mileage' | 'to';
+type SortBy = 'id' | 'mileage' | 'to' | 'status';
+
+// Порядок відповідає списку у фільтрі статусів нижче (В рейсі → На базі → На ТО → В ремонті).
+const TRUCK_STATUS_RANK: Record<TruckStatus, number> = { trip: 0, free: 1, service: 2, repair: 3 };
 
 type NewTruckForm = {
   plate: string;
   model: string;
   wialonUnitId: string;
-  fuelNormL100km: string;
 };
 
 type EditTruckForm = NewTruckForm & { driverId: string };
 
-const EMPTY_TRUCK_FORM: NewTruckForm = { plate: '', model: '', wialonUnitId: '', fuelNormL100km: '' };
+const EMPTY_TRUCK_FORM: NewTruckForm = { plate: '', model: '', wialonUnitId: '' };
 const EMPTY_EDIT_FORM: EditTruckForm = { ...EMPTY_TRUCK_FORM, driverId: '' };
 
 function toBadge(truck: Truck) {
@@ -43,12 +46,25 @@ function toBadge(truck: Truck) {
   );
 }
 
+function docBadge(truck: Truck) {
+  const status = truckDocumentStatus(truck);
+  const item = truckMostUrgentDocument(truck);
+  if (status === 'unknown' || !item) return <span className="badge badge-gray">немає даних</span>;
+  const name = effectiveDocumentParams(item, truck).name;
+  const badgeClass = status === 'overdue' ? 'badge-red' : status === 'soon' ? 'badge-amber' : 'badge-green';
+  return (
+    <span className={`badge ${badgeClass}`} title={name}>
+      {name}: {documentItemRemainingLabel(item, truck)}
+    </span>
+  );
+}
+
 export default function FleetPage() {
   const { user } = useAuth();
   const { trucks, loading, error, refetch } = useTrucks();
   const { drivers } = useDrivers();
   const [statusFilter, setStatusFilter] = useState<TruckStatus | 'all'>('all');
-  const [sortBy, setSortBy] = useState<SortBy>('id');
+  const [sortBy, setSortBy] = useState<SortBy>('status');
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<NewTruckForm>(EMPTY_TRUCK_FORM);
   const [formError, setFormError] = useState<string | null>(null);
@@ -104,7 +120,6 @@ export default function FleetPage() {
       plate: t.plate,
       model: t.model,
       wialonUnitId: t.wialonUnitId ?? '',
-      fuelNormL100km: t.fuelNormL100km != null ? String(t.fuelNormL100km) : '',
       driverId: t.driverId ?? '',
     });
     setEditError(null);
@@ -129,7 +144,6 @@ export default function FleetPage() {
           plate: editForm.plate.trim(),
           model: editForm.model.trim(),
           wialonUnitId: editForm.wialonUnitId.trim() || null,
-          fuelNormL100km: editForm.fuelNormL100km === '' ? null : Number(editForm.fuelNormL100km),
           driverId: editForm.driverId || null,
         }),
       });
@@ -157,7 +171,6 @@ export default function FleetPage() {
           plate: form.plate.trim(),
           model: form.model.trim(),
           wialonUnitId: form.wialonUnitId.trim() || null,
-          fuelNormL100km: form.fuelNormL100km === '' ? null : Number(form.fuelNormL100km),
         }),
       });
       setForm(EMPTY_TRUCK_FORM);
@@ -174,6 +187,7 @@ export default function FleetPage() {
   if (statusFilter !== 'all') list = list.filter((t) => t.status === statusFilter);
   if (sortBy === 'mileage') list.sort((a, b) => b.totalMileageKm - a.totalMileageKm);
   if (sortBy === 'to') list.sort((a, b) => statusRank(truckStatus(b)) - statusRank(truckStatus(a)));
+  if (sortBy === 'status') list.sort((a, b) => TRUCK_STATUS_RANK[a.status] - TRUCK_STATUS_RANK[b.status]);
   if (sortBy === 'id') list.sort((a, b) => a.plate.localeCompare(b.plate, 'uk'));
 
   return (
@@ -220,16 +234,6 @@ export default function FleetPage() {
               />
             </div>
             <div>
-              <div style={{ fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 }}>Норматив, л/100км</div>
-              <input
-                type="number"
-                value={form.fuelNormL100km}
-                onChange={(e) => setForm({ ...form, fuelNormL100km: e.target.value })}
-                placeholder="необов'язково"
-                style={{ width: 140 }}
-              />
-            </div>
-            <div>
               <div style={{ fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 }}>Wialon unit ID</div>
               <input
                 type="text"
@@ -259,7 +263,8 @@ export default function FleetPage() {
             <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)}>
               <option value="id">Сортувати за номером</option>
               <option value="mileage">За пробігом</option>
-              <option value="to">За терміном ТО</option>
+              <option value="status">За статусом</option>
+              <option value="to">За «До ТО»</option>
             </select>
           </div>
           <div className="card-title-sub">
@@ -281,7 +286,7 @@ export default function FleetPage() {
                   <th>Водій</th>
                   <th>Загальний пробіг</th>
                   <th>До ТО</th>
-                  <th>Норматив, л/100км</th>
+                  <th>Документи</th>
                   <th>Wialon ID</th>
                   {user?.role === 'admin' && <th></th>}
                 </tr>
@@ -329,14 +334,7 @@ export default function FleetPage() {
                         </td>
                         <td>{fmt(t.totalMileageKm)} км</td>
                         <td>{toBadge(t)}</td>
-                        <td>
-                          <input
-                            type="number"
-                            value={editForm.fuelNormL100km}
-                            onChange={(e) => setEditForm({ ...editForm, fuelNormL100km: e.target.value })}
-                            style={{ width: 90 }}
-                          />
-                        </td>
+                        <td>{docBadge(t)}</td>
                         <td>
                           <input
                             type="text"
@@ -411,7 +409,7 @@ export default function FleetPage() {
                           )}
                         </td>
                         <td>{toBadge(t)}</td>
-                        <td>{t.fuelNormL100km ?? '—'}</td>
+                        <td>{docBadge(t)}</td>
                         <td>{t.wialonUnitId ?? '—'}</td>
                         {user?.role === 'admin' && (
                           <td>

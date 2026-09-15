@@ -1,6 +1,11 @@
 import { useTrucks } from '../lib/useTrucks';
+import { useRepairs } from '../lib/useRepairs';
 import { itemRemainingLabel, effectiveParams, truckMostUrgentItem, truckStatus } from '../lib/maintenanceStatus';
+import { documentItemRemainingLabel, effectiveDocumentParams, truckMostUrgentDocument, truckDocumentStatus } from '../lib/documentStatus';
 import FleetMap from '../components/FleetMap';
+import FleetMileageChart from '../components/FleetMileageChart';
+import TopRoutesChart from '../components/TopRoutesChart';
+import DriverMileageChart from '../components/DriverMileageChart';
 import { Truck, TruckStatus } from '../types';
 
 const today = new Date();
@@ -22,9 +27,20 @@ function renderKpis(trucks: Truck[]) {
 
 export default function DashboardPage() {
   const { trucks, loading, error } = useTrucks();
+  const { repairs, loading: repairsLoading, error: repairsError } = useRepairs();
 
   const upcoming = trucks
     .map((t) => ({ truck: t, status: truckStatus(t), item: truckMostUrgentItem(t) }))
+    .filter((x) => (x.status === 'soon' || x.status === 'overdue') && x.item)
+    .sort((a, b) => (a.status === b.status ? 0 : a.status === 'overdue' ? -1 : 1))
+    .slice(0, 6);
+
+  const inRepair = repairs
+    .filter((r) => r.status === 'in_progress')
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const upcomingDocs = trucks
+    .map((t) => ({ truck: t, status: truckDocumentStatus(t), item: truckMostUrgentDocument(t) }))
     .filter((x) => (x.status === 'soon' || x.status === 'overdue') && x.item)
     .sort((a, b) => (a.status === b.status ? 0 : a.status === 'overdue' ? -1 : 1))
     .slice(0, 6);
@@ -62,6 +78,13 @@ export default function DashboardPage() {
 
           <FleetMap trucks={trucks} />
 
+          <FleetMileageChart />
+
+          <div className="row-2">
+            <TopRoutesChart />
+            <DriverMileageChart />
+          </div>
+
           <div className="card">
             <div className="card-head">
               <div className="card-title">ТО, що наближається</div>
@@ -86,6 +109,66 @@ export default function DashboardPage() {
                   </span>
                 </div>
               ))
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-head">
+              <div className="card-title">Документи, що спливають</div>
+            </div>
+            {upcomingDocs.length === 0 ? (
+              <div className="empty">Усі документи в нормі</div>
+            ) : (
+              upcomingDocs.map(({ truck, status, item }) => (
+                <div className="driver-card" key={truck.id}>
+                  <div style={{ flex: 1 }}>
+                    <div className="driver-name">
+                      {truck.plate}{' '}
+                      <span style={{ fontWeight: 500, color: 'var(--gray-500)', fontSize: 12 }}>· {truck.model}</span>
+                    </div>
+                    <div className="driver-meta">
+                      {effectiveDocumentParams(item!, truck).name}
+                      {truck.driver ? ` · водій ${truck.driver.fullName}` : ''}
+                    </div>
+                  </div>
+                  <span className={`badge ${status === 'overdue' ? 'badge-red' : 'badge-amber'}`}>
+                    {status === 'overdue' ? 'прострочено' : 'залишилось'} {documentItemRemainingLabel(item!, truck)}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-head">
+              <div className="card-title">В ремонті</div>
+            </div>
+            {repairsError && <div className="empty">{repairsError}</div>}
+            {!repairsError && repairsLoading && <div className="empty">Завантаження…</div>}
+            {!repairsError && !repairsLoading && (
+              inRepair.length === 0 ? (
+                <div className="empty">Зараз жоден ТЗ не в ремонті</div>
+              ) : (
+                inRepair.map((r) => (
+                  <div className="driver-card" key={r.id}>
+                    <div style={{ flex: 1 }}>
+                      <div className="driver-name">
+                        {r.truck.plate}{' '}
+                        <span style={{ fontWeight: 500, color: 'var(--gray-500)', fontSize: 12 }}>· {r.truck.model}</span>
+                      </div>
+                      <div className="driver-meta">
+                        {r.description}
+                        {r.downtimeDays != null ? ` · простій ${r.downtimeDays} дн.` : ''}
+                        {' · з '}
+                        {new Date(r.date).toLocaleDateString('uk-UA')}
+                      </div>
+                    </div>
+                    <span className={`badge ${r.type === 'planned' ? 'badge-blue' : 'badge-red'}`}>
+                      {r.type === 'planned' ? 'плановий' : 'позаплановий'}
+                    </span>
+                  </div>
+                ))
+              )
             )}
           </div>
         </>

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Prisma, PrismaClient } from '@prisma/client';
-import { requireAuth, requireAdmin } from '../middleware/auth';
+import { requireAuth, requireAdmin, AuthedRequest } from '../middleware/auth';
 
 const prisma = new PrismaClient();
 export const maintenanceTypesRouter = Router();
@@ -15,13 +15,16 @@ function slugify(name: string): string {
 }
 
 // Довідник читають і admin, і viewer
-maintenanceTypesRouter.get('/', requireAuth, async (_req, res) => {
-  const types = await prisma.maintenanceType.findMany({ orderBy: { name: 'asc' } });
+maintenanceTypesRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
+  const types = await prisma.maintenanceType.findMany({
+    where: { companyId: req.user!.companyId },
+    orderBy: { name: 'asc' },
+  });
   res.json(types);
 });
 
 // Створення/редагування/видалення — лише admin (перевірка ролі обов'язкова на бекенді)
-maintenanceTypesRouter.post('/', requireAuth, requireAdmin, async (req, res) => {
+maintenanceTypesRouter.post('/', requireAuth, requireAdmin, async (req: AuthedRequest, res) => {
   const { name, intervalKm, intervalDays, soonKm, soonDays, allowOverride } = req.body;
   if (!name || typeof name !== 'string' || !name.trim()) {
     return res.status(400).json({ error: 'Вкажіть назву виду робіт' });
@@ -32,6 +35,7 @@ maintenanceTypesRouter.post('/', requireAuth, requireAdmin, async (req, res) => 
 
   const type = await prisma.maintenanceType.create({
     data: {
+      companyId: req.user!.companyId,
       key: slugify(name),
       name: name.trim(),
       intervalKm: intervalKm ?? null,
@@ -44,10 +48,15 @@ maintenanceTypesRouter.post('/', requireAuth, requireAdmin, async (req, res) => 
   res.status(201).json(type);
 });
 
-maintenanceTypesRouter.patch('/:id', requireAuth, requireAdmin, async (req, res) => {
+maintenanceTypesRouter.patch('/:id', requireAuth, requireAdmin, async (req: AuthedRequest, res) => {
   const { name, intervalKm, intervalDays, soonKm, soonDays, allowOverride } = req.body;
   const nextIntervalKm = intervalKm !== undefined ? intervalKm : undefined;
   const nextIntervalDays = intervalDays !== undefined ? intervalDays : undefined;
+
+  const existing = await prisma.maintenanceType.findFirst({
+    where: { id: req.params.id, companyId: req.user!.companyId },
+  });
+  if (!existing) return res.status(404).json({ error: 'Вид робіт не знайдено' });
 
   try {
     const type = await prisma.maintenanceType.update({
@@ -70,7 +79,12 @@ maintenanceTypesRouter.patch('/:id', requireAuth, requireAdmin, async (req, res)
   }
 });
 
-maintenanceTypesRouter.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
+maintenanceTypesRouter.delete('/:id', requireAuth, requireAdmin, async (req: AuthedRequest, res) => {
+  const existing = await prisma.maintenanceType.findFirst({
+    where: { id: req.params.id, companyId: req.user!.companyId },
+  });
+  if (!existing) return res.status(404).json({ error: 'Вид робіт не знайдено' });
+
   try {
     await prisma.maintenanceType.delete({ where: { id: req.params.id } });
     res.status(204).end();

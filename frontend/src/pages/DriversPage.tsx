@@ -172,6 +172,7 @@ export default function DriversPage() {
                             value={d.trucks[0]?.id ?? ''}
                             disabled={reassigningId === d.id}
                             onChange={(e) => handleReassign(d, e.target.value)}
+                            style={{ width: 200 }}
                           >
                             <option value="">— без ТЗ —</option>
                             {allTrucks.map((t) => {

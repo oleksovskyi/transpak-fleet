@@ -6,6 +6,8 @@
 <title>Transpak — Панель управління автопарком</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
 :root{
@@ -216,7 +218,40 @@ select,input[type=date]{
 
 /* admin-only elements hidden for viewer role */
 body.role-viewer .admin-only{display:none !important;}
+/* admin-only elements hidden for viewer AND logist role (full CRUD stays admin-exclusive) */
+body.role-viewer .admin-only, body.role-logist .admin-only{display:none !important;}
+/* planning-only elements: visible for admin and logist, hidden for viewer */
+body.role-viewer .planning-only{display:none !important;}
 .role-badge{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:20px;background:var(--blue-100);color:var(--blue-600);margin-left:6px;vertical-align:1px;}
+
+/* planning board */
+.plan-table{border-collapse:separate;border-spacing:0;}
+.plan-table th{position:sticky;top:0;background:var(--white);}
+.plan-truck-cell{min-width:190px;}
+.plan-day-cell{min-width:130px;vertical-align:top;padding:6px !important;}
+.plan-pill{background:var(--blue-100);color:var(--blue-600);border-radius:7px;padding:6px 8px;font-size:11.5px;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:6px;}
+.plan-pill button{border:none;background:transparent;color:var(--blue-600);cursor:pointer;font-size:13px;line-height:1;padding:0;opacity:.7;}
+.plan-pill button:hover{opacity:1;}
+.plan-add-btn{width:100%;border:1px dashed var(--gray-300);background:transparent;border-radius:7px;padding:7px;color:var(--gray-500);font-size:12px;cursor:pointer;}
+.plan-add-btn:hover{border-color:var(--blue-500);color:var(--blue-600);}
+.risk-icon{width:15px;height:15px;color:var(--amber-600);display:inline-flex;vertical-align:-3px;margin-left:4px;}
+.risk-icon svg{width:15px;height:15px;}
+.blocked-note{font-size:11px;color:var(--red-600);margin-top:2px;}
+
+/* live map — MapLibre GL JS + OpenFreeMap "positron" style (світла, схематична,
+   без зайвих POI — під тон корпоративного дизайну) */
+#fleetMap{height:420px;border-radius:8px;z-index:1;background:var(--gray-50);border:1px solid var(--gray-200);}
+.map-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;}
+.map-legend-item{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;cursor:pointer;user-select:none;padding:5px 10px;border-radius:7px;border:1px solid var(--gray-200);background:var(--white);color:var(--gray-700);}
+.map-legend-item.off{opacity:.4;background:var(--gray-50);}
+.map-legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+.truck-marker-dom{width:14px;height:14px;border-radius:50%;border:2px solid #fff;cursor:pointer;box-shadow:0 1px 4px rgba(20,30,50,.35);}
+.maplibregl-popup-content{background:var(--white);color:var(--gray-900);border-radius:8px;padding:10px 12px;font-family:var(--font);font-size:12.5px;min-width:160px;box-shadow:0 4px 16px rgba(20,30,50,.15);}
+.map-popup-title{font-weight:700;font-size:13px;margin-bottom:3px;color:var(--navy-950);}
+.map-popup-row{color:var(--gray-500);margin-top:2px;}
+.maplibregl-ctrl-group{background:var(--white) !important;border:1px solid var(--gray-200) !important;}
+.maplibregl-ctrl-attrib{background:rgba(255,255,255,.75) !important;}
+.maplibregl-ctrl-attrib a, .maplibregl-ctrl-attrib{color:var(--gray-500) !important;}
 
 /* expandable maintenance rows */
 .expand-btn{width:22px;height:22px;border:none;background:var(--gray-100);border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--gray-600);transition:transform .12s ease;}
@@ -274,6 +309,10 @@ body.role-viewer .admin-only{display:none !important;}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="6" r="2.3"/><circle cx="19" cy="18" r="2.3"/><path d="M6.8 7.6C10 11 13 9 15 12s0 3.4 2.2 4.4"/></svg>
         Маршрути
       </button>
+      <button class="nav-item" data-target="planning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/><path d="M8 2v4M16 2v4"/></svg>
+        Планування
+      </button>
       <button class="nav-item" data-target="fuel">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V6a2 2 0 012-2h6a2 2 0 012 2v15"/><path d="M4 11h10"/><path d="M14 8h2l3 3v5.5a1.5 1.5 0 01-3 0V15h-2"/></svg>
         Паливо
@@ -306,6 +345,10 @@ body.role-viewer .admin-only{display:none !important;}
         <button data-role="viewer">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
           Переглядач
+        </button>
+        <button data-role="logist">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/><path d="M8 2v4M16 2v4"/></svg>
+          Логіст
         </button>
       </div>
       <div class="notif-wrap">
@@ -340,6 +383,17 @@ body.role-viewer .admin-only{display:none !important;}
       </div>
 
       <div class="kpi-grid" id="kpi-grid"></div>
+
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">Карта автопарку — живі позиції</div>
+            <div class="card-title-sub" id="map-updated-label">оновлено щойно</div>
+          </div>
+        </div>
+        <div id="fleetMap"></div>
+        <div class="map-legend" id="map-legend"></div>
+      </div>
 
       <div class="row-2" style="margin-bottom:18px;">
         <div class="card">
@@ -567,6 +621,61 @@ body.role-viewer .admin-only{display:none !important;}
             <tbody id="fuel-table-body"></tbody>
           </table>
         </div>
+      </div>
+    </section>
+
+    <!-- ===================== PLANNING (LOGIST) ===================== -->
+    <section class="section" id="planning">
+      <div class="topbar">
+        <div>
+          <div class="page-title">Планування тижня</div>
+          <div class="page-sub">Розподіл рейсів лише серед доступних ТЗ — без прострочених ТО і без тих, хто в ремонті</div>
+        </div>
+        <div class="seg" id="plan-view-seg">
+          <button data-v="board" class="active">Дошка</button>
+          <button data-v="list">Список</button>
+        </div>
+      </div>
+
+      <div class="grid-3" style="margin-bottom:18px;">
+        <div class="mini-stat"><div class="l">Доступно для планування</div><div class="v" id="plan-available"></div></div>
+        <div class="mini-stat"><div class="l">Ризик по ТО протягом тижня</div><div class="v" id="plan-risk" style="color:var(--amber-600)"></div></div>
+        <div class="mini-stat"><div class="l">Виключено (ремонт / прострочено)</div><div class="v" id="plan-excluded" style="color:var(--red-600)"></div></div>
+      </div>
+
+      <!-- BOARD VIEW -->
+      <div class="card" id="plan-board-view">
+        <div class="card-head">
+          <div>
+            <div class="card-title">Тижнева дошка</div>
+            <div class="card-title-sub">клікніть «+», щоб призначити маршрут на день; <svg style="width:12px;height:12px;vertical-align:-1px;color:var(--amber-600)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 7v5l3 3"/></svg> — ризик по ТО протягом тижня</div>
+          </div>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="plan-table">
+            <thead><tr><th class="plan-truck-cell">ТЗ / водій</th><th class="plan-day-cell" id="plan-head-0"></th><th class="plan-day-cell" id="plan-head-1"></th><th class="plan-day-cell" id="plan-head-2"></th><th class="plan-day-cell" id="plan-head-3"></th><th class="plan-day-cell" id="plan-head-4"></th><th class="plan-day-cell" id="plan-head-5"></th><th class="plan-day-cell" id="plan-head-6"></th></tr></thead>
+            <tbody id="plan-board-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- LIST VIEW -->
+      <div class="card" id="plan-list-view" style="display:none;">
+        <div class="card-head">
+          <div class="card-title">Список доступних ТЗ</div>
+          <div class="card-title-sub">швидке призначення одного маршруту на весь тиждень</div>
+        </div>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead><tr><th>ТЗ</th><th>Модель</th><th>Водій</th><th>Статус ТО</th><th>Заплановано днів</th><th>Основний маршрут</th><th class="planning-only">Дія</th></tr></thead>
+            <tbody id="plan-list-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div class="card-title">Виключено з планування</div></div>
+        <div id="plan-excluded-list"></div>
       </div>
     </section>
 
@@ -1179,6 +1288,83 @@ function renderRoutes(){
 }
 renderRoutes();
 
+/* ============================= LIVE FLEET MAP (справжні OpenStreetMap тайли) ============================= */
+const CITY_COORDS = {
+  'Жидачів':[49.35,24.13], 'Львів':[49.84,24.03], 'Rzeszów':[50.04,22.00],
+  'Варшава':[52.23,21.01], 'Краків':[50.06,19.94], 'Ужгород':[48.62,22.29],
+  'Київ':[50.45,30.52], 'Дрогобич':[49.35,23.50], 'Стрий':[49.26,23.85],
+  'Wrocław':[51.11,17.03], 'Познань':[52.41,16.93], 'Гданськ':[54.35,18.65],
+  'Тернопіль':[49.55,25.60],
+};
+const STATUS_COLOR = { trip:'#3f80cc', free:'#1b8a5a', service:'#b8790b', repair:'#c23b3b' };
+const STATUS_LABEL = { trip:'В рейсі', free:'Вільний', service:'На ТО', repair:'В ремонті' };
+
+function truckLatLng(t){
+  if(t.status==='trip' && t.route){
+    const [a,b] = t.route;
+    const ca = CITY_COORDS[a] || CITY_COORDS['Жидачів'];
+    const cb = CITY_COORDS[b] || CITY_COORDS['Львів'];
+    const frac = 0.12 + rnd()*0.76;
+    return [ ca[0] + (cb[0]-ca[0])*frac, ca[1] + (cb[1]-ca[1])*frac ];
+  }
+  const base = CITY_COORDS['Жидачів'];
+  return [ base[0] + (rnd()-0.5)*0.22, base[1] + (rnd()-0.5)*0.22 ];
+}
+
+let fleetMap, statusMarkers = { trip:[], free:[], service:[], repair:[] };
+function initFleetMap(){
+  fleetMap = new maplibregl.Map({
+    container: 'fleetMap',
+    style: 'https://tiles.openfreemap.org/styles/positron',
+    center: [22.3, 50.4],
+    zoom: 6,
+    scrollZoom: false,
+    attributionControl: { compact: true },
+  });
+  fleetMap.addControl(new maplibregl.NavigationControl({ showCompass:false }), 'top-left');
+
+  fleetMap.on('load', ()=>{
+    trucks.forEach(t=>{
+      const [lat,lng] = truckLatLng(t);
+      const el = document.createElement('div');
+      el.className = 'truck-marker-dom';
+      el.style.background = STATUS_COLOR[t.status];
+
+      const popupHtml = `
+        <div class="map-popup-title">${t.plate} · ${t.model}</div>
+        <div class="map-popup-row">Статус: <b style="color:${STATUS_COLOR[t.status]}">${STATUS_LABEL[t.status]}</b></div>
+        <div class="map-popup-row">Водій: ${t.driver}</div>
+        ${t.status==='trip' ? `<div class="map-popup-row">Маршрут: ${t.route[0]} → ${t.route[1]}</div>` : ''}
+        <div class="map-popup-row">Пробіг: ${fmt(t.totalMileage)} км</div>
+      `;
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([lng, lat])
+        .setPopup(new maplibregl.Popup({ offset: 14 }).setHTML(popupHtml))
+        .addTo(fleetMap);
+      statusMarkers[t.status].push(marker);
+    });
+  });
+
+  document.getElementById('map-legend').innerHTML = Object.keys(STATUS_COLOR).map(st=>{
+    const count = trucks.filter(t=>t.status===st).length;
+    return `<div class="map-legend-item" data-legend="${st}">
+      <span class="map-legend-dot" style="background:${STATUS_COLOR[st]}"></span>${STATUS_LABEL[st]} (${count})
+    </div>`;
+  }).join('');
+  document.querySelectorAll('[data-legend]').forEach(chip=>{
+    chip.addEventListener('click', ()=>{
+      const st = chip.dataset.legend;
+      chip.classList.toggle('off');
+      const hidden = chip.classList.contains('off');
+      statusMarkers[st].forEach(m=> m.getElement().style.display = hidden ? 'none' : 'block');
+    });
+  });
+}
+initFleetMap();
+document.querySelector('.nav-item[data-target="dashboard"]').addEventListener('click', ()=>{
+  setTimeout(()=> fleetMap && fleetMap.resize(), 50);
+});
+
 /* ============================= FUEL TABLE ============================= */
 function renderFuelTable(){
   const list = trucks.slice().sort((a,b)=>(b.fuelActual-b.fuelNorm)-(a.fuelActual-a.fuelNorm));
@@ -1279,8 +1465,143 @@ document.getElementById('role-switch').addEventListener('click',(e)=>{
   const btn = e.target.closest('button'); if(!btn) return;
   document.querySelectorAll('#role-switch button').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
-  document.body.classList.toggle('role-viewer', btn.dataset.role==='viewer');
+  document.body.classList.remove('role-viewer','role-logist');
+  if(btn.dataset.role==='viewer') document.body.classList.add('role-viewer');
+  if(btn.dataset.role==='logist') document.body.classList.add('role-logist');
 });
+
+/* ============================= PLANNING (LOGIST) ============================= */
+const WEEK_DAYS = ['Пн','Вт','Ср','Чт','Пт','Сб','Нд'];
+const weeklyPlan = {}; // key `${truckId}_${dayIdx}` -> route name string | undefined
+const ROUTE_NAMES = ROUTE_PAIRS.map(([a,b])=>a+' → '+b);
+
+/* орієнтовний недельний пробіг для оцінки ризику по ТО — типовий тиждень активного ТЗ */
+const TYPICAL_WEEKLY_KM = 2500;
+
+function isExcludedFromPlanning(t){
+  return t.status==='repair' || truckStatus(t)==='overdue';
+}
+function truckWeeklyRiskItems(t){
+  return t.items.filter(item=>{
+    const p = effectiveParams(item);
+    if(p.intervalKm==null) return false;
+    const rem = p.intervalKm - item.sinceKm;
+    return rem>=0 && rem < TYPICAL_WEEKLY_KM;
+  });
+}
+
+function renderPlanningStats(){
+  const excluded = trucks.filter(isExcludedFromPlanning);
+  const available = trucks.filter(t=>!isExcludedFromPlanning(t));
+  const atRisk = available.filter(t=>truckWeeklyRiskItems(t).length>0);
+  document.getElementById('plan-available').textContent = available.length;
+  document.getElementById('plan-risk').textContent = atRisk.length;
+  document.getElementById('plan-excluded').textContent = excluded.length;
+
+  document.getElementById('plan-excluded-list').innerHTML = excluded.map(t=>{
+    const reason = t.status==='repair' ? 'в ремонті' : `прострочено: ${effectiveParams(truckMostUrgentItem(t)).name}`;
+    return `<div class="driver-card">
+      <div style="flex:1;">
+        <div class="driver-name">${t.plate} <span style="font-weight:500;color:var(--gray-500);font-size:12px;">· ${t.model}</span></div>
+        <div class="driver-meta">водій ${t.driver}</div>
+      </div>
+      <span class="badge badge-red">${reason}</span>
+    </div>`;
+  }).join('') || `<div class="empty">Немає виключених ТЗ — весь придатний парк можна планувати</div>`;
+}
+
+function renderPlanBoard(){
+  WEEK_DAYS.forEach((d,i)=> document.getElementById(`plan-head-${i}`).textContent = d);
+  const available = trucks.filter(t=>!isExcludedFromPlanning(t));
+  document.getElementById('plan-board-body').innerHTML = available.map(t=>{
+    const risk = truckWeeklyRiskItems(t);
+    const riskIcon = risk.length ? `<span class="risk-icon" title="Ризик: ${risk.map(it=>effectiveParams(it).name).join(', ')}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 7v5l3 3"/></svg></span>` : '';
+    const days = WEEK_DAYS.map((_,i)=>{
+      const key = `${t.id}_${i}`;
+      const assigned = weeklyPlan[key];
+      if(assigned){
+        return `<td class="plan-day-cell"><div class="plan-pill"><span>${assigned}</span><button class="planning-only" data-remove-plan="${key}" title="Прибрати">×</button></div></td>`;
+      }
+      return `<td class="plan-day-cell"><button class="plan-add-btn planning-only" data-add-plan="${key}">+ додати</button><span class="admin-only-placeholder" style="display:none;"></span></td>`;
+    }).join('');
+    return `<tr>
+      <td class="plan-truck-cell">
+        <div style="font-weight:700;">${t.plate}${riskIcon}</div>
+        <div style="color:var(--gray-500);font-size:11.5px;">${t.model} · ${t.driver}</div>
+      </td>
+      ${days}
+    </tr>`;
+  }).join('') || `<tr><td class="empty">Немає доступних ТЗ для планування</td></tr>`;
+
+  document.querySelectorAll('[data-add-plan]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const key = btn.dataset.addPlan;
+      const choice = prompt('Оберіть маршрут (введіть номер):\n' + ROUTE_NAMES.map((r,i)=>`${i+1}. ${r}`).join('\n'));
+      const idx = Number(choice) - 1;
+      if(choice!=null && ROUTE_NAMES[idx]){
+        weeklyPlan[key] = ROUTE_NAMES[idx];
+        renderPlanBoard(); renderPlanList();
+      }
+    });
+  });
+  document.querySelectorAll('[data-remove-plan]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      delete weeklyPlan[btn.dataset.removePlan];
+      renderPlanBoard(); renderPlanList();
+    });
+  });
+}
+
+function renderPlanList(){
+  const available = trucks.filter(t=>!isExcludedFromPlanning(t));
+  document.getElementById('plan-list-body').innerHTML = available.map(t=>{
+    const risk = truckWeeklyRiskItems(t);
+    const stBadge = risk.length
+      ? `<span class="badge badge-amber">ризик: ${effectiveParams(risk[0]).name}</span>`
+      : `<span class="badge badge-green">в нормі</span>`;
+    const assignedDays = WEEK_DAYS.map((_,i)=>weeklyPlan[`${t.id}_${i}`]).filter(Boolean);
+    const mainRoute = assignedDays.length ? mostCommon(assignedDays) : '—';
+    return `<tr>
+      <td><span class="plate">${t.plate}</span></td>
+      <td>${t.model}</td>
+      <td>${t.driver}</td>
+      <td>${stBadge}</td>
+      <td>${assignedDays.length} / 7</td>
+      <td>${mainRoute}</td>
+      <td class="planning-only"><button class="btn" style="padding:5px 10px;font-size:11.5px;" data-quick-fill="${t.id}">Заповнити тиждень</button></td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="7" class="empty">Немає доступних ТЗ для планування</td></tr>`;
+
+  document.querySelectorAll('[data-quick-fill]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const tid = btn.dataset.quickFill;
+      const choice = prompt('Оберіть маршрут для всього тижня (введіть номер):\n' + ROUTE_NAMES.map((r,i)=>`${i+1}. ${r}`).join('\n'));
+      const idx = Number(choice) - 1;
+      if(choice!=null && ROUTE_NAMES[idx]){
+        for(let i=0;i<7;i++) weeklyPlan[`${tid}_${i}`] = ROUTE_NAMES[idx];
+        renderPlanBoard(); renderPlanList();
+      }
+    });
+  });
+}
+function mostCommon(arr){
+  const counts = {};
+  arr.forEach(v=>counts[v]=(counts[v]||0)+1);
+  return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
+}
+
+document.getElementById('plan-view-seg').addEventListener('click',(e)=>{
+  const btn = e.target.closest('button'); if(!btn) return;
+  document.querySelectorAll('#plan-view-seg button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  const isBoard = btn.dataset.v==='board';
+  document.getElementById('plan-board-view').style.display = isBoard ? 'block' : 'none';
+  document.getElementById('plan-list-view').style.display = isBoard ? 'none' : 'block';
+});
+
+renderPlanningStats();
+renderPlanBoard();
+renderPlanList();
 
 /* ============================= NOTIFICATIONS ============================= */
 function renderNotifications(){

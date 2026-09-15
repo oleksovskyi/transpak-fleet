@@ -5,6 +5,7 @@ import { useAuth } from '../lib/auth';
 import { apiFetch, ApiError } from '../lib/api';
 import { useDialog } from '../lib/dialog';
 import { fmt } from '../lib/maintenanceStatus';
+import { aggregateRoutes } from '../lib/routeStats';
 import { RouteLog } from '../types';
 
 type NewRouteForm = {
@@ -17,39 +18,8 @@ type NewRouteForm = {
 
 const EMPTY_FORM: NewRouteForm = { truckId: '', fromCity: '', toCity: '', distanceKm: '', date: '' };
 
-type Period = '30' | '90' | 'all';
-const PERIOD_LABEL: Record<Period, string> = { '30': '30 днів', '90': '90 днів', all: 'Увесь час' };
-
-interface AggregatedRow {
-  key: string;
-  plate: string;
-  fromCity: string;
-  toCity: string;
-  trips: number;
-  totalDistanceKm: number;
-}
-
-function aggregate(logs: RouteLog[]): AggregatedRow[] {
-  const map = new Map<string, AggregatedRow>();
-  for (const log of logs) {
-    const key = `${log.truck.plate}::${log.fromCity}::${log.toCity}`;
-    const existing = map.get(key);
-    if (existing) {
-      existing.trips += 1;
-      existing.totalDistanceKm += log.distanceKm;
-    } else {
-      map.set(key, {
-        key,
-        plate: log.truck.plate,
-        fromCity: log.fromCity,
-        toCity: log.toCity,
-        trips: 1,
-        totalDistanceKm: log.distanceKm,
-      });
-    }
-  }
-  return Array.from(map.values()).sort((a, b) => b.trips - a.trips);
-}
+type Period = '7' | '30' | '90' | 'all';
+const PERIOD_LABEL: Record<Period, string> = { '7': '7 днів', '30': '30 днів', '90': '90 днів', all: 'Увесь час' };
 
 export default function RoutesPage() {
   const { user } = useAuth();
@@ -60,6 +30,12 @@ export default function RoutesPage() {
   const [form, setForm] = useState<NewRouteForm>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState('');
+  const [pageSize, setPageSize] = useState(20);
+  const [page, setPage] = useState(1);
+  const [aggSearch, setAggSearch] = useState('');
+  const [aggPageSize, setAggPageSize] = useState(20);
+  const [aggPage, setAggPage] = useState(1);
   const dialog = useDialog();
 
   const filteredLogs = useMemo(() => {
@@ -68,7 +44,45 @@ export default function RoutesPage() {
     return routeLogs.filter((l) => new Date(l.date).getTime() >= cutoff);
   }, [routeLogs, period]);
 
-  const aggregated = useMemo(() => aggregate(filteredLogs), [filteredLogs]);
+  const aggregated = useMemo(() => aggregateRoutes(filteredLogs), [filteredLogs]);
+
+  const searchedAggregated = useMemo(() => {
+    const q = aggSearch.trim().toLowerCase();
+    if (!q) return aggregated;
+    return aggregated.filter(
+      (r) =>
+        r.fromCity.toLowerCase().includes(q) ||
+        r.toCity.toLowerCase().includes(q) ||
+        r.plates.some((p) => p.toLowerCase().includes(q)),
+    );
+  }, [aggregated, aggSearch]);
+
+  const aggTotalPages = Math.max(1, Math.ceil(searchedAggregated.length / aggPageSize));
+  const aggCurrentPage = Math.min(aggPage, aggTotalPages);
+  const pagedAggregated = useMemo(
+    () => searchedAggregated.slice((aggCurrentPage - 1) * aggPageSize, aggCurrentPage * aggPageSize),
+    [searchedAggregated, aggCurrentPage, aggPageSize],
+  );
+
+  // "Усі рейси" — незалежний від фільтра періоду вище повний журнал, тож має власні
+  // пошук і пагінацію (список зростає з кожним новим виїздом кожного ТЗ).
+  const searchedLogs = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return routeLogs;
+    return routeLogs.filter(
+      (l) =>
+        l.truck.plate.toLowerCase().includes(q) ||
+        l.fromCity.toLowerCase().includes(q) ||
+        l.toCity.toLowerCase().includes(q),
+    );
+  }, [routeLogs, search]);
+
+  const totalPages = Math.max(1, Math.ceil(searchedLogs.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pagedLogs = useMemo(
+    () => searchedLogs.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [searchedLogs, currentPage, pageSize],
+  );
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -192,6 +206,27 @@ export default function RoutesPage() {
                 <option key={p} value={p}>{PERIOD_LABEL[p]}</option>
               ))}
             </select>
+            <input
+              type="text"
+              value={aggSearch}
+              onChange={(e) => {
+                setAggSearch(e.target.value);
+                setAggPage(1);
+              }}
+              placeholder="Пошук за ТЗ або містом…"
+              style={{ width: 220 }}
+            />
+            <select
+              value={aggPageSize}
+              onChange={(e) => {
+                setAggPageSize(Number(e.target.value));
+                setAggPage(1);
+              }}
+            >
+              {[10, 20, 50, 100].map((n) => (
+                <option key={n} value={n}>{n} на сторінці</option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -203,37 +238,75 @@ export default function RoutesPage() {
             <table>
               <thead>
                 <tr>
-                  <th>Держ. номер</th>
                   <th>Маршрут</th>
                   <th>Рейсів</th>
+                  <th>ТЗ</th>
                   <th>Загальна відстань</th>
                 </tr>
               </thead>
               <tbody>
-                {aggregated.length === 0 ? (
+                {pagedAggregated.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="empty">Немає рейсів за обраний період</td>
+                    <td colSpan={4} className="empty">
+                      {aggregated.length === 0 ? 'Немає рейсів за обраний період' : 'Нічого не знайдено за пошуком'}
+                    </td>
                   </tr>
                 ) : (
-                  aggregated.map((row) => (
+                  pagedAggregated.map((row) => (
                     <tr key={row.key}>
-                      <td><span className="plate">{row.plate}</span></td>
                       <td>{row.fromCity} → {row.toCity}</td>
                       <td className="route-count">{row.trips}</td>
+                      <td style={{ fontSize: 12, color: 'var(--gray-500)' }}>{row.plates.join(', ')}</td>
                       <td>{fmt(row.totalDistanceKm)} км</td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginTop: 12 }}>
+              <span style={{ fontSize: 12, color: 'var(--gray-500)' }}>
+                Сторінка {aggCurrentPage} з {aggTotalPages} ({searchedAggregated.length} маршрутів)
+              </span>
+              <button className="btn" disabled={aggCurrentPage <= 1} onClick={() => setAggPage(aggCurrentPage - 1)}>
+                ← Попередня
+              </button>
+              <button className="btn" disabled={aggCurrentPage >= aggTotalPages} onClick={() => setAggPage(aggCurrentPage + 1)}>
+                Наступна →
+              </button>
+            </div>
           </div>
         )}
       </div>
 
       <div className="card">
         <div className="card-head">
-          <div className="card-title">Усі рейси</div>
-          <div className="card-title-sub">повний журнал — незалежно від фільтра періоду вище</div>
+          <div>
+            <div className="card-title">Усі рейси</div>
+            <div className="card-title-sub">повний журнал — незалежно від фільтра періоду вище</div>
+          </div>
+          <div className="filters">
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Пошук за ТЗ або містом…"
+              style={{ width: 220 }}
+            />
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setPage(1);
+              }}
+            >
+              {[10, 20, 50, 100].map((n) => (
+                <option key={n} value={n}>{n} на сторінці</option>
+              ))}
+            </select>
+          </div>
         </div>
         {!error && !loading && (
           <div style={{ overflowX: 'auto' }}>
@@ -244,21 +317,29 @@ export default function RoutesPage() {
                   <th>Маршрут</th>
                   <th>Відстань</th>
                   <th>Дата</th>
+                  <th>Джерело</th>
                   {user?.role === 'admin' && <th></th>}
                 </tr>
               </thead>
               <tbody>
-                {routeLogs.length === 0 ? (
+                {pagedLogs.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="empty">Ще немає жодного зареєстрованого рейсу</td>
+                    <td colSpan={6} className="empty">
+                      {routeLogs.length === 0 ? 'Ще немає жодного зареєстрованого рейсу' : 'Нічого не знайдено за пошуком'}
+                    </td>
                   </tr>
                 ) : (
-                  routeLogs.map((log) => (
+                  pagedLogs.map((log) => (
                     <tr key={log.id}>
                       <td><span className="plate">{log.truck.plate}</span></td>
                       <td>{log.fromCity} → {log.toCity}</td>
                       <td>{fmt(log.distanceKm)} км</td>
                       <td>{new Date(log.date).toLocaleDateString('uk-UA')}</td>
+                      <td>
+                        <span className={`badge ${log.source === 'auto' ? 'badge-blue' : 'badge-gray'}`}>
+                          {log.source === 'auto' ? 'GPS' : 'Вручну'}
+                        </span>
+                      </td>
                       {user?.role === 'admin' && (
                         <td>
                           <button
@@ -275,6 +356,17 @@ export default function RoutesPage() {
                 )}
               </tbody>
             </table>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginTop: 12 }}>
+              <span style={{ fontSize: 12, color: 'var(--gray-500)' }}>
+                Сторінка {currentPage} з {totalPages} ({searchedLogs.length} рейсів)
+              </span>
+              <button className="btn" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>
+                ← Попередня
+              </button>
+              <button className="btn" disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)}>
+                Наступна →
+              </button>
+            </div>
           </div>
         )}
       </div>

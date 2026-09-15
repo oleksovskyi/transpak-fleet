@@ -120,6 +120,77 @@ export async function getTripMileageKm(wialonUnitId: string, from: Date, to: Dat
   return Number(text.replace(/[^\d.]/g, '')) || 0;
 }
 
+// Один "сирий" GPS-відрізок поїздки з того самого звіту "Пробіг" (таблиця unit_trips) —
+// Wialon сам детектує поїздки й реверс-геокодує адреси початку/кінця, без потреби в
+// геозонах. Це не бізнес-рейс сам по собі (їх може бути кілька за один виїзд з бази) —
+// групування в "Гніздичів → місто" робить викликач (backfillRoutesOnce у index.ts).
+export interface WialonTripLeg {
+  fromAddress: string;
+  toAddress: string;
+  fromLat: number;
+  fromLon: number;
+  toLat: number;
+  toLon: number;
+  distanceKm: number;
+  startedAt: Date;
+  endedAt: Date;
+}
+
+interface WialonReportRow {
+  t1: number;
+  t2: number;
+  c: (string | { t: string; v?: number; y?: number; x?: number; u?: number })[];
+}
+
+function isPointCell(v: unknown): v is { t: string; y?: number; x?: number } {
+  return typeof v === 'object' && v !== null && 'y' in v;
+}
+
+export async function getTrips(wialonUnitId: string, from: Date, to: Date): Promise<WialonTripLeg[]> {
+  if (!sid) await login();
+  const exec = await call<WialonExecReportResult>('report/exec_report', {
+    reportResourceId: REPORT_RESOURCE_ID,
+    reportTemplateId: REPORT_TEMPLATE_ID,
+    reportObjectId: Number(wialonUnitId),
+    reportObjectSecId: 0,
+    interval: { from: Math.floor(from.getTime() / 1000), to: Math.floor(to.getTime() / 1000), flags: 0 },
+  });
+
+  const tables = exec.reportResult?.tables ?? [];
+  const tableIndex = tables.findIndex((t) => t.name === 'unit_trips');
+  if (tableIndex === -1) return [];
+
+  const rows = await call<WialonReportRow[]>('report/get_result_rows', {
+    tableIndex,
+    indexFrom: 0,
+    indexTo: tables[tableIndex].rows,
+  });
+
+  // Колонки unit_trips: [№, дата, {початок: час+координати}, {початок: адреса}, кінець-час,
+  // {кінець: адреса+координати}, тривалість, "N km"] — час/адреса початку й кінця мають
+  // координати (y/x), точні unix-мітки беремо з рядка (t1/t2), а не з колонок.
+  return rows
+    .map((row): WialonTripLeg | null => {
+      const fromPoint = row.c[2];
+      const fromAddr = row.c[3];
+      const toAddr = row.c[5];
+      const distanceText = String(row.c[7] ?? '0');
+      if (!isPointCell(fromPoint) || !isPointCell(fromAddr) || !isPointCell(toAddr)) return null;
+      return {
+        fromAddress: fromAddr.t,
+        toAddress: toAddr.t,
+        fromLat: fromPoint.y ?? 0,
+        fromLon: fromPoint.x ?? 0,
+        toLat: toAddr.y ?? 0,
+        toLon: toAddr.x ?? 0,
+        distanceKm: Number(distanceText.replace(/[^\d.]/g, '')) || 0,
+        startedAt: new Date(row.t1 * 1000),
+        endedAt: new Date(row.t2 * 1000),
+      };
+    })
+    .filter((t): t is WialonTripLeg => t !== null);
+}
+
 // Ресурс з довідником водіїв — специфічний для акаунту, як і звіт вище.
 const DRIVERS_RESOURCE_ID = Number(process.env.WIALON_DRIVERS_RESOURCE_ID ?? 18412006);
 

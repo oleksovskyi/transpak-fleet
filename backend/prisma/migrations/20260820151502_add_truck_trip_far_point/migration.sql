@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Truck" ADD COLUMN     "tripFarLat" DOUBLE PRECISION,
+ADD COLUMN     "tripFarLon" DOUBLE PRECISION;

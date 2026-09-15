@@ -9,6 +9,7 @@
     "sync:once": "tsx src/index.ts --once",
     "mileage:once": "tsx src/index.ts --mileage-once",
     "import-drivers": "tsx src/index.ts --import-drivers-once",
+    "backfill-routes": "tsx src/index.ts --backfill-routes-once",
     "prisma:generate": "prisma generate"
   },
   "dependencies": {

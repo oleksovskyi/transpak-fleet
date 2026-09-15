@@ -43,6 +43,29 @@ export interface TruckMaintenanceOverride {
   overrideIntervalDays: number | null;
 }
 
+export interface DocumentType {
+  id: string;
+  key: string;
+  name: string;
+  intervalDays: number;
+  soonDays: number;
+  allowOverride: boolean;
+}
+
+export interface TruckDocumentStatus {
+  id: string;
+  documentTypeId: string;
+  documentType: DocumentType;
+  lastIssuedAtDate: string | null;
+}
+
+export interface TruckDocumentOverride {
+  id: string;
+  documentTypeId: string;
+  documentType: DocumentType;
+  overrideIntervalDays: number;
+}
+
 export interface Repair {
   id: string;
   truckId: string;
@@ -55,6 +78,13 @@ export interface Repair {
   status: RepairStatus;
 }
 
+export interface RouteLogStop {
+  seq: number;
+  label: string;
+  lat: number;
+  lon: number;
+}
+
 export interface RouteLog {
   id: string;
   truckId: string;
@@ -63,6 +93,16 @@ export interface RouteLog {
   toCity: string;
   distanceKm: number;
   date: string;
+  source: 'manual' | 'auto';
+  stops: RouteLogStop[];
+}
+
+export interface MileageLog {
+  id: string;
+  truckId: string;
+  truck: Pick<Truck, 'id' | 'plate' | 'model' | 'driverId'> & { driver: Pick<Driver, 'id' | 'fullName'> | null };
+  date: string;
+  km: number;
 }
 
 export interface Truck {
@@ -75,9 +115,10 @@ export interface Truck {
   lat: number | null;
   lon: number | null;
   positionUpdatedAt: string | null;
-  fuelNormL100km: number | null;
   driverId: string | null;
   driver: Driver | null;
   maintenanceStatuses: TruckMaintenanceStatus[];
   overrides: TruckMaintenanceOverride[];
+  documentStatuses: TruckDocumentStatus[];
+  documentOverrides: TruckDocumentOverride[];
 }

@@ -9,6 +9,10 @@ import { driversRouter } from './routes/drivers';
 import { repairsRouter } from './routes/repairs';
 import { maintenanceLogsRouter } from './routes/maintenanceLogs';
 import { routeLogsRouter } from './routes/routeLogs';
+import { documentTypesRouter } from './routes/documentTypes';
+import { documentLogsRouter } from './routes/documentLogs';
+import { mileageLogsRouter } from './routes/mileageLogs';
+import { platformRouter } from './routes/platform';
 
 const app = express();
 app.use(cors());
@@ -21,6 +25,12 @@ app.use('/api/drivers', driversRouter);
 app.use('/api/repairs', repairsRouter);
 app.use('/api/maintenance-logs', maintenanceLogsRouter);
 app.use('/api/route-logs', routeLogsRouter);
+app.use('/api/document-types', documentTypesRouter);
+app.use('/api/document-logs', documentLogsRouter);
+app.use('/api/mileage-logs', mileageLogsRouter);
+// Онбординг нових клієнтів платформи — окрема авторизація (X-Platform-Key), не JWT
+// звичайного користувача. Див. requirePlatformAdmin у middleware/auth.ts.
+app.use('/api/platform', platformRouter);
 // TODO: /api/users, /api/notifications
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
