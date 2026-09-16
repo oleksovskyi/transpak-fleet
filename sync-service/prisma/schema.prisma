@@ -47,6 +47,29 @@ model Company {
   trucks           Truck[]
   maintenanceTypes MaintenanceType[]
   documentTypes    DocumentType[]
+  wialonConfig     CompanyWialonConfig?
+}
+
+// Wialon-креденшели й налаштування депо однієї компанії — раніше жили в .env
+// sync-service (по одному деплою на клієнта), тепер тут, щоб один sync-service
+// обробляв усіх клієнтів у циклі без нового деплою на кожного нового клієнта.
+// enabled = false ставить синхронізацію на пауза без видалення налаштувань.
+model CompanyWialonConfig {
+  id                      String   @id @default(uuid())
+  companyId               String   @unique
+  company                 Company  @relation(fields: [companyId], references: [id])
+  wialonToken             String
+  wialonBaseUrl           String?  // null → дефолтний https://hst-api.wialon.com/wialon/ajax.html
+  depotLat                Float
+  depotLon                Float
+  depotRadiusKm           Float
+  depotName               String
+  wialonReportResourceId  Int
+  wialonReportTemplateId  Int
+  wialonDriversResourceId Int?
+  enabled                 Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 }
 
 model User {

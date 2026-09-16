@@ -1,34 +1,34 @@
 import 'dotenv/config';
 import cron from 'node-cron';
 import { PrismaClient } from './prisma';
-import { login, getUnits, getTripMileageKm, getTrips, distanceKm, getDrivers } from './wialonClient';
+import type { CompanyWialonConfig } from '@prisma/client';
+import { createWialonClient, distanceKm, WialonClient } from './wialonClient';
 
 const prisma = new PrismaClient();
 
-// Кожен деплой sync-service обслуговує одного клієнта платформи (свій WIALON_TOKEN,
-// своє депо) — тож і компанію, чиї ТЗ/водіїв він синхронізує, вказуємо явно, а не
-// припускаємо "єдина компанія в базі".
-const COMPANY_ID_ENV = process.env.COMPANY_ID;
-if (!COMPANY_ID_ENV) {
-  throw new Error('COMPANY_ID не задано в .env — sync-service не знає, чиї дані синхронізувати');
+// Один процес обробляє всіх клієнтів платформи — Wialon-креденшели й депо кожного
+// живуть у CompanyWialonConfig (БД), а не в .env одного деплою. Новий клієнт = новий
+// рядок у цій таблиці (через POST /api/platform/companies/:id/wialon-config), без
+// нового Railway-сервісу. enabled=false тимчасово ставить компанію на паузу.
+async function loadConfigs(companyIdFilter?: string): Promise<CompanyWialonConfig[]> {
+  return prisma.companyWialonConfig.findMany({
+    where: { enabled: true, ...(companyIdFilter ? { companyId: companyIdFilter } : {}) },
+  });
 }
-const COMPANY_ID: string = COMPANY_ID_ENV;
 
-// Геозона бази: ТЗ вважається "на базі" (готовий до нового рейсу), лише якщо фізично
-// поруч із депо — рух тут ролі не грає. Якщо ТЗ стоїть, але далеко (напр. ночує в рейсі) —
-// це все одно "В рейсі", а не "Вільний".
-const DEPOT_LAT = Number(process.env.DEPOT_LAT ?? 49.3295);
-const DEPOT_LON = Number(process.env.DEPOT_LON ?? 24.0915);
-const DEPOT_RADIUS_KM = Number(process.env.DEPOT_RADIUS_KM ?? 2);
-// Фіксована відправна точка для автовизначення маршрутів — у компанії лише одна база,
-// прямих рейсів між двома НЕ-базовими містами не буває (бізнес-правило, підтверджене
-// користувачем). Пункти призначення визначаються автоматично з адрес Wialon-звіту (нижче),
-// без ручного довідника — Wialon сам реверс-геокодує кожну точку треку.
-const DEPOT_NAME = process.env.DEPOT_NAME ?? 'Гніздичів';
+function clientFor(config: CompanyWialonConfig): WialonClient {
+  return createWialonClient({
+    token: config.wialonToken,
+    baseUrl: config.wialonBaseUrl,
+    reportResourceId: config.wialonReportResourceId,
+    reportTemplateId: config.wialonReportTemplateId,
+    driversResourceId: config.wialonDriversResourceId,
+  });
+}
 
 // Межі України з запасом на прикордонні області — GPS-точка далеко поза ними майже напевно
 // наслідок РЕБ-спуфінгу (глушіння/підміна координат у зоні бойових дій), а не реальне
-// переміщення ТЗ. Використовується і в live-синку (syncOnce), і в бекфілі (backfillRoutesOnce).
+// переміщення ТЗ. Використовується і в live-синку (syncOnceForCompany), і в маршрутах.
 const UKRAINE_LAT_RANGE: [number, number] = [43, 53];
 const UKRAINE_LON_RANGE: [number, number] = [20, 41];
 function isPlausiblePosition(lat: number, lon: number): boolean {
@@ -112,16 +112,23 @@ function unmatchedDestinationLabel(lat: number | null, lon: number | null, regio
   return region ? `Поблизу ${region}, ${coords}` : `Точка не налаштована, ${coords}`;
 }
 
-async function syncOnce() {
-  await login();
-  const units = await getUnits();
+function startOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+async function syncOnceForCompany(config: CompanyWialonConfig, client: WialonClient) {
+  await client.login();
+  const units = await client.getUnits();
 
   let matched = 0;
   for (const unit of units) {
     const truck = await prisma.truck.findFirst({
-      where: { wialonUnitId: unit.wialonUnitId, companyId: COMPANY_ID },
+      where: { wialonUnitId: unit.wialonUnitId, companyId: config.companyId },
     });
     if (!truck) continue; // ТЗ ще не прив'язано до Wialon unit в адмінці
+
     matched++;
 
     // Wialon-лічильник 0 означає "не відкалібровано", а не "реально 0 км" — не затираємо
@@ -134,7 +141,7 @@ async function syncOnce() {
     // (на практиці бачили точку в Лімі, Перу) — довіряти такій позиції не можна: ні для
     // карти, ні для статусу "На базі".
     const hasPosition = (unit.lat !== 0 || unit.lon !== 0) && isPlausiblePosition(unit.lat, unit.lon);
-    const atBase = hasPosition && distanceKm(unit.lat, unit.lon, DEPOT_LAT, DEPOT_LON) <= DEPOT_RADIUS_KM;
+    const atBase = hasPosition && distanceKm(unit.lat, unit.lon, config.depotLat, config.depotLon) <= config.depotRadiusKm;
 
     await prisma.truck.update({
       where: { id: truck.id },
@@ -157,29 +164,25 @@ async function syncOnce() {
     // порівняти unit.odometerKm з truck_maintenance_status + maintenance_type.interval_km
   }
 
-  console.log(`[sync] Wialon: ${units.length} unit(s), прив'язано й оновлено: ${matched} ТЗ, ${new Date().toISOString()}`);
-}
-
-function startOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
+  console.log(
+    `[sync] ${config.companyId}: Wialon ${units.length} unit(s), прив'язано й оновлено: ${matched} ТЗ, ${new Date().toISOString()}`,
+  );
 }
 
 // "Калібрування" пробігу: для ТЗ, де адмін хоч раз вручну ввів пробіг (mileageBaselineAt
 // заданий), рахуємо totalMileageKm = mileageBaselineKm + пробіг у поїздках за офіційним
 // Wialon-звітом від mileageBaselineAt до зараз. ТЗ без калібрування цей крок не чіпає.
-async function syncMileageFromReports() {
-  await login();
+async function syncMileageForCompany(config: CompanyWialonConfig, client: WialonClient) {
+  await client.login();
   const trucks = await prisma.truck.findMany({
-    where: { companyId: COMPANY_ID, wialonUnitId: { not: null }, mileageBaselineAt: { not: null } },
+    where: { companyId: config.companyId, wialonUnitId: { not: null }, mileageBaselineAt: { not: null } },
   });
 
   const now = new Date();
   let updated = 0;
   for (const truck of trucks) {
     try {
-      const deltaKm = await getTripMileageKm(truck.wialonUnitId!, truck.mileageBaselineAt!, now);
+      const deltaKm = await client.getTripMileageKm(truck.wialonUnitId!, truck.mileageBaselineAt!, now);
       const newTotal = Math.round((truck.mileageBaselineKm ?? 0) + deltaKm);
 
       await prisma.truck.update({ where: { id: truck.id }, data: { totalMileageKm: newTotal } });
@@ -193,28 +196,30 @@ async function syncMileageFromReports() {
       console.error(`[mileage] помилка для ${truck.plate}:`, err instanceof Error ? err.message : err);
     }
   }
-  console.log(`[mileage] оновлено пробіг для ${updated} з ${trucks.length} відкаліброваних ТЗ, ${now.toISOString()}`);
+  console.log(
+    `[mileage] ${config.companyId}: оновлено пробіг для ${updated} з ${trucks.length} відкаліброваних ТЗ, ${now.toISOString()}`,
+  );
 }
 
-// Одноразовий імпорт водіїв із Wialon (npm run import-drivers). Не чіпає ТЗ, які вже мають
-// закріпленого водія вручну — щоб нічого не перезаписати; так само пропускає водіїв,
-// які вже є в базі (за збігом імені), щоб повторний запуск не плодив дублікатів.
-async function importDriversOnce() {
-  await login();
-  const wialonDrivers = await getDrivers();
+// Одноразовий імпорт водіїв із Wialon (npm run import-drivers -- --company-id=...). Не чіпає
+// ТЗ, які вже мають закріпленого водія вручну — щоб нічого не перезаписати; так само пропускає
+// водіїв, які вже є в базі (за збігом імені), щоб повторний запуск не плодив дублікатів.
+async function importDriversForCompany(config: CompanyWialonConfig, client: WialonClient) {
+  await client.login();
+  const wialonDrivers = await client.getDrivers();
 
   let created = 0;
   let skipped = 0;
   let assigned = 0;
   for (const wd of wialonDrivers) {
-    const existing = await prisma.driver.findFirst({ where: { fullName: wd.fullName, companyId: COMPANY_ID } });
+    const existing = await prisma.driver.findFirst({ where: { fullName: wd.fullName, companyId: config.companyId } });
     if (existing) {
       skipped++;
       console.log(`[drivers] "${wd.fullName}" вже існує — пропущено`);
       continue;
     }
 
-    const driver = await prisma.driver.create({ data: { fullName: wd.fullName, companyId: COMPANY_ID } });
+    const driver = await prisma.driver.create({ data: { fullName: wd.fullName, companyId: config.companyId } });
     created++;
 
     if (!wd.boundWialonUnitId) {
@@ -222,7 +227,7 @@ async function importDriversOnce() {
       continue;
     }
     const truck = await prisma.truck.findFirst({
-      where: { wialonUnitId: wd.boundWialonUnitId, companyId: COMPANY_ID },
+      where: { wialonUnitId: wd.boundWialonUnitId, companyId: config.companyId },
     });
     if (!truck) {
       console.log(`[drivers] "${wd.fullName}" створено, прив'язаний ТЗ (unit ${wd.boundWialonUnitId}) не знайдено в базі`);
@@ -236,7 +241,7 @@ async function importDriversOnce() {
   }
 
   console.log(
-    `[drivers] з Wialon: ${wialonDrivers.length}, створено: ${created}, вже існували: ${skipped}, закріплено за ТЗ: ${assigned}`,
+    `[drivers] ${config.companyId}: з Wialon: ${wialonDrivers.length}, створено: ${created}, вже існували: ${skipped}, закріплено за ТЗ: ${assigned}`,
   );
 }
 
@@ -244,20 +249,20 @@ async function importDriversOnce() {
 // поїздок кожного ТЗ за минулі `days` днів і групує їх у виїзди від бази: від моменту, коли ТЗ
 // покинув радіус депо, до моменту повернення. Один виїзд = один RouteLog з повною
 // послідовністю міст, які реально розпізнав Wialon по дорозі (toCity: "Львів → Київ → Львів →
-// Гніздичів", тобто fromCity+toCity разом читаються як увесь тур), distanceKm — сума
-// відрізків за весь виїзд. Назва міста — напряму з Wialon-адреси кожної точки (Wialon сам
-// реверс-геокодує), без ручного довідника: працює для будь-якого міста без налаштування.
+// <депо>", тобто fromCity+toCity разом читаються як увесь тур), distanceKm — сума відрізків за
+// весь виїзд. Назва міста — напряму з Wialon-адреси кожної точки (Wialon сам реверс-геокодує),
+// без ручного довідника: працює для будь-якого міста без налаштування.
 //
 // Викликається і як періодична синхронізація (короткий rolling-window, кожну годину — ловить
 // щойно завершені виїзди), і як одноразовий глибокий бекфіл (npm run backfill-routes, довгий
 // період) — обидва режими ідемпотентні завдяки повній перебудові auto-записів у межах вікна
-// [from, to] на кожному виклику (див. коментар у syncRoutesForTruck), тож повторний виклик
-// для вже обробленого періоду нічого не дублює.
+// [from, to] на кожному виклику (див. коментар нижче), тож повторний виклик для вже обробленого
+// періоду нічого не дублює.
 //
 // Виїзди, чий початок не потрапив у вікно [from, to] (звіт починається "посеред подорожі"),
 // свідомо пропускаються — без спостереженого виїзду з бази ми не знаємо ні справжньої точки
 // відліку відстані, ні гарантії, що це один виїзд, а не кінець попереднього.
-// Обробка маршрутів одного ТЗ — винесена окремо від syncRoutesFromReports, щоб виклик
+// Обробка маршрутів одного ТЗ — винесена окремо від syncRoutesForCompany, щоб виклик
 // getTrips() (Wialon-звіт) можна було обгорнути в try/catch на рівні виклику: цей звіт
 // періодично падає з тимчасовою помилкою (напр. "код 4"), і без ізоляції один поганий ТЗ
 // обвалював би увесь sync-service — той самий процес, що й live-синк позицій кожні 15 хв.
@@ -265,6 +270,8 @@ async function syncRoutesForTruck(
   truck: { id: string; plate: string; wialonUnitId: string | null },
   from: Date,
   to: Date,
+  client: WialonClient,
+  depot: { lat: number; lon: number; radiusKm: number; name: string },
 ): Promise<number> {
   // Wialon трохи по-різному сегментує той самий рейс між повторними запитами (звідси й
   // невеликий розкид відстані, напр. 1405 vs 1407 км для того самого виїзду) — точний час
@@ -276,7 +283,7 @@ async function syncRoutesForTruck(
     where: { truckId: truck.id, source: 'auto', date: { gte: from, lte: to } },
   });
 
-  const legs = await getTrips(truck.wialonUnitId!, from, to);
+  const legs = await client.getTrips(truck.wialonUnitId!, from, to);
   legs.sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime());
 
   let traveling = false;
@@ -301,8 +308,8 @@ async function syncRoutesForTruck(
       continue;
     }
 
-    const startAtBase = distanceKm(leg.fromLat, leg.fromLon, DEPOT_LAT, DEPOT_LON) <= DEPOT_RADIUS_KM;
-    const endAtBase = distanceKm(leg.toLat, leg.toLon, DEPOT_LAT, DEPOT_LON) <= DEPOT_RADIUS_KM;
+    const startAtBase = distanceKm(leg.fromLat, leg.fromLon, depot.lat, depot.lon) <= depot.radiusKm;
+    const endAtBase = distanceKm(leg.toLat, leg.toLon, depot.lat, depot.lon) <= depot.radiusKm;
 
     if (!traveling) {
       if (startAtBase && !endAtBase) {
@@ -331,20 +338,20 @@ async function syncRoutesForTruck(
     journeyDistanceKm += leg.distanceKm;
     if (!unknownStart) {
       const label = extractPlaceLabel(leg.toAddress);
-      // Wialon іноді відносить точку до "Гніздичів" (широка поштова локальність), навіть
-      // якщо вона поза нашим вузьким радіусом бази (напр. 2.5 км від депо) — це не реальна
+      // Wialon іноді відносить точку до депо (широка поштова локальність), навіть якщо
+      // вона поза нашим вузьким радіусом бази (напр. 2.5 км від депо) — це не реальна
       // проміжна зупинка, тож не додаємо її в послідовність (інакше вона плодила б
-      // "Гніздичів → Гніздичів → ..." на початку або зайве "→ біля Гніздичів" перед
-      // фінальним поверненням на відрізку, що й так уже завершує виїзд).
-      if (label && label.includes(DEPOT_NAME)) {
+      // "<депо> → <депо> → ..." на початку або зайве "→ біля <депо>" перед фінальним
+      // поверненням на відрізку, що й так уже завершує виїзд).
+      if (label && label.includes(depot.name)) {
         // ігноруємо — не пункт призначення
       } else if (label) {
         if (journeyCities[journeyCities.length - 1]?.label !== label) {
           journeyCities.push({ label, lat: leg.toLat, lon: leg.toLon });
         }
       } else if (journeyCities.length === 0) {
-        const distFromDepot = distanceKm(leg.toLat, leg.toLon, DEPOT_LAT, DEPOT_LON);
-        const farDist = journeyFarLat != null ? distanceKm(journeyFarLat, journeyFarLon!, DEPOT_LAT, DEPOT_LON) : -1;
+        const distFromDepot = distanceKm(leg.toLat, leg.toLon, depot.lat, depot.lon);
+        const farDist = journeyFarLat != null ? distanceKm(journeyFarLat, journeyFarLon!, depot.lat, depot.lon) : -1;
         if (distFromDepot > farDist) {
           journeyFarLat = leg.toLat;
           journeyFarLon = leg.toLon;
@@ -363,12 +370,12 @@ async function syncRoutesForTruck(
         if (rounded > 0) {
           const toCity =
             journeyCities.length > 0
-              ? `${journeyCities.map((c) => c.label).join(' → ')} → ${DEPOT_NAME}`
+              ? `${journeyCities.map((c) => c.label).join(' → ')} → ${depot.name}`
               : unmatchedDestinationLabel(journeyFarLat, journeyFarLon, journeyFarRegion);
           await prisma.routeLog.create({
             data: {
               truckId: truck.id,
-              fromCity: DEPOT_NAME,
+              fromCity: depot.name,
               toCity,
               distanceKm: rounded,
               date: journeyStartedAt,
@@ -400,11 +407,11 @@ async function syncRoutesForTruck(
   return journeyCount;
 }
 
-// Обгортка для всіх ТЗ — кожен обробляється окремо через try/catch (див. коментар вище),
-// тож збій одного Wialon-звіту не зупиняє синхронізацію для решти флоту.
-async function syncRoutesFromReports(days: number) {
-  await login();
-  const trucks = await prisma.truck.findMany({ where: { companyId: COMPANY_ID, wialonUnitId: { not: null } } });
+// Обгортка для всіх ТЗ однієї компанії — кожен обробляється окремо через try/catch (див.
+// коментар вище), тож збій одного Wialon-звіту не зупиняє синхронізацію для решти флоту.
+async function syncRoutesForCompany(config: CompanyWialonConfig, client: WialonClient, days: number) {
+  await client.login();
+  const trucks = await prisma.truck.findMany({ where: { companyId: config.companyId, wialonUnitId: { not: null } } });
   const to = new Date();
   // Межа "from" прив'язана до початку доби, а не до точної миті "зараз мінус N днів" — інакше
   // вона повільно сповзає вперед з кожним запуском (крон щогодини) і рано чи пізно "переповзає"
@@ -415,26 +422,63 @@ async function syncRoutesFromReports(days: number) {
   // Прив'язка до початку доби дає стабільну межу впродовж усієї доби незалежно від того, о
   // котрій годині спрацював крон.
   const from = startOfDay(new Date(to.getTime() - days * 86400000));
+  const depot = { lat: config.depotLat, lon: config.depotLon, radiusKm: config.depotRadiusKm, name: config.depotName };
 
   let createdTotal = 0;
   for (const truck of trucks) {
     try {
-      createdTotal += await syncRoutesForTruck(truck, from, to);
+      createdTotal += await syncRoutesForTruck(truck, from, to, client, depot);
     } catch (err) {
       console.error(`[routes] помилка для ${truck.plate}:`, err instanceof Error ? err.message : err);
     }
   }
 
-  console.log(`[routes] готово: ${createdTotal} нових записів RouteLog за останні ${days} днів`);
+  console.log(`[routes] ${config.companyId}: готово ${createdTotal} нових записів RouteLog за останні ${days} днів`);
+}
+
+// ---- Оркестрація по всіх (або одній — --company-id) активних компаніях ----
+// Кожна компанія обробляється в своєму try/catch: недійсний токен чи збій Wialon в одного
+// клієнта не має зупиняти синхронізацію решти — так само, як один поганий ТЗ не зупиняв
+// синхронізацію решти флоту в попередній, однокомпанійній версії.
+
+async function forEachCompany(
+  label: string,
+  companyIdFilter: string | undefined,
+  task: (config: CompanyWialonConfig, client: WialonClient) => Promise<void>,
+) {
+  const configs = await loadConfigs(companyIdFilter);
+  if (configs.length === 0) {
+    console.log(`[${label}] немає активних CompanyWialonConfig${companyIdFilter ? ` для ${companyIdFilter}` : ''}`);
+    return;
+  }
+  for (const config of configs) {
+    try {
+      await task(config, clientFor(config));
+    } catch (err) {
+      console.error(`[${label}] помилка для компанії ${config.companyId}:`, err instanceof Error ? err.message : err);
+    }
+  }
+}
+
+const syncOnceAll = (companyId?: string) => forEachCompany('sync', companyId, syncOnceForCompany);
+const syncMileageAll = (companyId?: string) => forEachCompany('mileage', companyId, syncMileageForCompany);
+const importDriversAll = (companyId?: string) => forEachCompany('drivers', companyId, importDriversForCompany);
+const syncRoutesAll = (days: number, companyId?: string) =>
+  forEachCompany('routes', companyId, (config, client) => syncRoutesForCompany(config, client, days));
+
+function argCompanyId(): string | undefined {
+  const arg = process.argv.find((a) => a.startsWith('--company-id='));
+  return arg ? arg.slice('--company-id='.length) : undefined;
 }
 
 const runOnce = process.argv.includes('--once');
 const runMileageOnce = process.argv.includes('--mileage-once');
 const runImportDriversOnce = process.argv.includes('--import-drivers-once');
 const runBackfillRoutesOnce = process.argv.includes('--backfill-routes-once');
+const companyIdArg = argCompanyId();
 
 if (runImportDriversOnce) {
-  importDriversOnce()
+  importDriversAll(companyIdArg)
     .then(() => prisma.$disconnect())
     .catch((err) => {
       console.error('[drivers] помилка:', err);
@@ -442,23 +486,24 @@ if (runImportDriversOnce) {
     });
 } else if (runBackfillRoutesOnce) {
   // Глибокий одноразовий бекфіл (напр. після додавання нового ТЗ чи для перевірки давнішого
-  // періоду) — довгий діапазон, за замовчуванням 30 днів.
+  // періоду) — довгий діапазон, за замовчуванням 30 днів. --company-id=... обмежує одним
+  // клієнтом (напр. щойно доданим), без потреби чекати повний крон-цикл для решти.
   const days = Number(process.env.BACKFILL_ROUTE_DAYS ?? 30);
-  syncRoutesFromReports(days)
+  syncRoutesAll(days, companyIdArg)
     .then(() => prisma.$disconnect())
     .catch((err) => {
       console.error('[routes] помилка:', err);
       process.exit(1);
     });
 } else if (runMileageOnce) {
-  syncMileageFromReports()
+  syncMileageAll(companyIdArg)
     .then(() => prisma.$disconnect())
     .catch((err) => {
       console.error('[mileage] помилка:', err);
       process.exit(1);
     });
 } else if (runOnce) {
-  syncOnce()
+  syncOnceAll(companyIdArg)
     .then(() => prisma.$disconnect())
     .catch((err) => {
       console.error('[sync] помилка:', err);
@@ -467,21 +512,21 @@ if (runImportDriversOnce) {
 } else {
   // Постійний режим — жоден з періодичних викликів не має впасти необробленим: інакше одна
   // мережева помилка (Wialon чи Postgres) вбиває весь довгоживучий процес разом з live-синком
-  // позицій. syncRoutesFromReports уже стійка per-ТЗ всередині (див. коментар вище), але
-  // помилка до цього циклу (напр. login()) чи в самих syncOnce/syncMileageFromReports
-  // (без внутрішнього try/catch) — усе одно ловимо тут, щоб наступний такт крону просто
-  // спробував ще раз.
+  // позицій усіх компаній. forEachCompany уже стійка per-компанія всередині (див. коментар
+  // вище), але помилка до цього циклу (напр. сам prisma.companyWialonConfig.findMany) —
+  // усе одно ловимо тут, щоб наступний такт крону просто спробував ще раз.
   const safe = (label: string, fn: () => Promise<void>) => () =>
     fn().catch((err) => console.error(`[${label}] необроблена помилка:`, err instanceof Error ? err.message : err));
 
-  const runSyncOnce = safe('sync', syncOnce);
-  const runMileage = safe('mileage', syncMileageFromReports);
-  const runRoutes = safe('routes', () => syncRoutesFromReports(3));
+  const runSyncOnce = safe('sync', () => syncOnceAll());
+  const runMileage = safe('mileage', () => syncMileageAll());
+  const runRoutes = safe('routes', () => syncRoutesAll(3));
 
   // позиція/статус — раз на 15 хв (docs/wialon-integration-plan.md розділ 1.4);
   // звіт з пробігом — раз на годину (важчий виклик, ~15с на весь парк);
   // маршрути — раз на годину, короткий rolling-window (3 дні) — ловить щойно завершені
   // виїзди й підстраховує пропущені такти без потреби тримати стан живого виїзду в БД.
+  // Усі три тепер обходять усіх активних клієнтів платформи за один такт, не лише одного.
   cron.schedule('*/15 * * * *', runSyncOnce);
   cron.schedule('0 * * * *', runMileage);
   cron.schedule('30 * * * *', runRoutes);

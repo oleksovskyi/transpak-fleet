@@ -67,3 +67,65 @@ platformRouter.post('/users', async (req, res) => {
 
   res.status(201).json({ id: user.id, email: user.email, role: user.role, companyId: user.companyId });
 });
+
+// Wialon-креденшели й налаштування депо компанії — те, що раніше було .env для окремого
+// деплою sync-service на клієнта. Тепер sync-service (один процес для всіх клієнтів)
+// читає ці рядки з БД у кожному циклі синхронізації.
+platformRouter.get('/companies/:id/wialon-config', async (req, res) => {
+  const config = await prisma.companyWialonConfig.findUnique({ where: { companyId: req.params.id } });
+  if (!config) return res.status(404).json({ error: 'Wialon-конфіг для цієї компанії не задано' });
+  res.json(config);
+});
+
+// Upsert — один виклик і для першого налаштування нового клієнта, і для зміни токена/депо.
+platformRouter.put('/companies/:id/wialon-config', async (req, res) => {
+  const companyId = req.params.id;
+  const {
+    wialonToken,
+    wialonBaseUrl,
+    depotLat,
+    depotLon,
+    depotRadiusKm,
+    depotName,
+    wialonReportResourceId,
+    wialonReportTemplateId,
+    wialonDriversResourceId,
+    enabled,
+  } = req.body;
+
+  const company = await prisma.company.findUnique({ where: { id: companyId } });
+  if (!company) return res.status(404).json({ error: 'Компанію не знайдено' });
+
+  if (!wialonToken || typeof wialonToken !== 'string' || !wialonToken.trim()) {
+    return res.status(400).json({ error: 'Вкажіть Wialon token' });
+  }
+  if (typeof depotLat !== 'number' || typeof depotLon !== 'number' || typeof depotRadiusKm !== 'number') {
+    return res.status(400).json({ error: 'depotLat/depotLon/depotRadiusKm мають бути числами' });
+  }
+  if (!depotName || typeof depotName !== 'string' || !depotName.trim()) {
+    return res.status(400).json({ error: 'Вкажіть depotName' });
+  }
+  if (typeof wialonReportResourceId !== 'number' || typeof wialonReportTemplateId !== 'number') {
+    return res.status(400).json({ error: 'wialonReportResourceId/wialonReportTemplateId мають бути числами' });
+  }
+
+  const data = {
+    wialonToken: wialonToken.trim(),
+    wialonBaseUrl: wialonBaseUrl || null,
+    depotLat,
+    depotLon,
+    depotRadiusKm,
+    depotName: depotName.trim(),
+    wialonReportResourceId,
+    wialonReportTemplateId,
+    wialonDriversResourceId: wialonDriversResourceId ?? null,
+    enabled: enabled ?? true,
+  };
+
+  const config = await prisma.companyWialonConfig.upsert({
+    where: { companyId },
+    update: data,
+    create: { companyId, ...data },
+  });
+  res.json(config);
+});
