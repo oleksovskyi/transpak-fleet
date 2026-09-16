@@ -11,11 +11,15 @@ import DriversPage from './pages/DriversPage';
 import RepairsPage from './pages/RepairsPage';
 import RoutesPage from './pages/RoutesPage';
 import DocumentsPage from './pages/DocumentsPage';
+import PlatformAdminPage from './pages/PlatformAdminPage';
 
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Окремий рівень довіри (X-Platform-Key, не JWT користувача компанії) — навмисно
+          поза RequireAuth/Layout, без сайдбару конкретного клієнта. */}
+      <Route path="/platform" element={<PlatformAdminPage />} />
 
       <Route element={<RequireAuth />}>
         <Route element={<Layout />}>
