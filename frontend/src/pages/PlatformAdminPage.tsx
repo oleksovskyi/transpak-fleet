@@ -79,6 +79,74 @@ function PlatformKeyGate({ onUnlocked }: { onUnlocked: () => void }) {
   );
 }
 
+// Повторне введення платформного ключа перед видаленням — навмисно окремо від того, що
+// вже збережений у localStorage: захист від випадкового кліку, не від відсутності ключа.
+// Реальна перевірка все одно на бекенді (requirePlatformAdmin) — тут лише UX-запобіжник.
+function DeleteCompanyModal({
+  company,
+  onClose,
+  onDeleted,
+}: {
+  company: PlatformCompany;
+  onClose: () => void;
+  onDeleted: (id: string) => void;
+}) {
+  const [key, setKey] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/platform/companies/${company.id}`, {
+        method: 'DELETE',
+        headers: { 'X-Platform-Key': key },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? `Помилка запиту (${res.status})`);
+      }
+      onDeleted(company.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не вдалося видалити компанію');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div className="dialog-overlay" onClick={onClose}>
+      <div className="dialog-card" onClick={(e) => e.stopPropagation()}>
+        <div className="dialog-title">Видалити компанію «{company.name}»?</div>
+        <div className="dialog-message">
+          Дію не можна скасувати. Введіть платформний ключ (X-Platform-Key), щоб підтвердити.
+        </div>
+        <form onSubmit={handleDelete}>
+          {error && <div className="login-error" style={{ marginTop: 10 }}>{error}</div>}
+          <input
+            type="password"
+            name="confirm-delete-platform-key"
+            autoComplete="off"
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder="Платформний ключ"
+            autoFocus
+            style={{ marginTop: 10, width: '100%' }}
+          />
+          <div className="dialog-actions">
+            <button type="button" className="btn" onClick={onClose}>Скасувати</button>
+            <button type="submit" className="btn btn-danger" disabled={deleting || !key.trim()}>
+              {deleting ? 'Видалення…' : 'Видалити'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 type UserForm = { email: string; password: string; role: 'admin' | 'viewer' };
 const EMPTY_USER_FORM: UserForm = { email: '', password: '', role: 'admin' };
 
@@ -461,6 +529,7 @@ export default function PlatformAdminPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PlatformCompany | null>(null);
 
   const [newCompanyName, setNewCompanyName] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
@@ -583,13 +652,20 @@ export default function PlatformAdminPage() {
                         <td style={{ fontSize: 12, color: 'var(--gray-500)' }}>
                           {new Date(c.createdAt).toLocaleDateString('uk-UA')}
                         </td>
-                        <td>
+                        <td style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                           <button
                             className="btn"
                             style={{ padding: '5px 9px', fontSize: 11 }}
                             onClick={() => setExpandedId((prev) => (prev === c.id ? null : c.id))}
                           >
                             {expandedId === c.id ? 'Згорнути' : 'Керувати'}
+                          </button>
+                          <button
+                            className="btn"
+                            style={{ padding: '5px 9px', fontSize: 11, color: 'var(--red-600)' }}
+                            onClick={() => setDeleteTarget(c)}
+                          >
+                            Видалити
                           </button>
                         </td>
                       </tr>
@@ -608,6 +684,18 @@ export default function PlatformAdminPage() {
           </div>
         )}
       </div>
+
+      {deleteTarget && (
+        <DeleteCompanyModal
+          company={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={(id) => {
+            setCompanies((prev) => prev.filter((c) => c.id !== id));
+            if (expandedId === id) setExpandedId(null);
+            setDeleteTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 }

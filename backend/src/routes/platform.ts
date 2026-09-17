@@ -33,6 +33,42 @@ platformRouter.post('/companies', async (req, res) => {
   res.status(201).json(company);
 });
 
+// Видалення компанії — навмисно НЕ каскадне: якщо в неї лишились ТЗ/водії/користувачі/
+// довідники, відмовляємо з переліком того, що заважає, а не тихо стираємо історію
+// реального клієнта. Призначено для прибирання порожніх/тестових компаній; видалення
+// компанії з реальними даними — окрема, свідома дія (спершу прибрати їх вручну).
+platformRouter.delete('/companies/:id', async (req, res) => {
+  const companyId = req.params.id;
+  const company = await prisma.company.findUnique({ where: { id: companyId } });
+  if (!company) return res.status(404).json({ error: 'Компанію не знайдено' });
+
+  const [users, drivers, trucks, maintenanceTypes, documentTypes] = await Promise.all([
+    prisma.user.count({ where: { companyId } }),
+    prisma.driver.count({ where: { companyId } }),
+    prisma.truck.count({ where: { companyId } }),
+    prisma.maintenanceType.count({ where: { companyId } }),
+    prisma.documentType.count({ where: { companyId } }),
+  ]);
+
+  const blockers: string[] = [];
+  if (users > 0) blockers.push(`${users} користувач(ів)`);
+  if (drivers > 0) blockers.push(`${drivers} водіїв`);
+  if (trucks > 0) blockers.push(`${trucks} ТЗ`);
+  if (maintenanceTypes > 0) blockers.push(`${maintenanceTypes} видів ТО`);
+  if (documentTypes > 0) blockers.push(`${documentTypes} видів документів`);
+  if (blockers.length > 0) {
+    return res.status(409).json({
+      error: `Неможливо видалити — у компанії ще є: ${blockers.join(', ')}. Спершу видаліть це.`,
+    });
+  }
+
+  // Wialon-конфіг сам по собі не бізнес-дані клієнта (лише креденшели підключення) —
+  // прибираємо разом з компанією без окремого запобіжника.
+  await prisma.companyWialonConfig.deleteMany({ where: { companyId } });
+  await prisma.company.delete({ where: { id: companyId } });
+  res.status(204).end();
+});
+
 // Створення/оновлення користувача клієнта — той самий сценарій, що
 // backend/scripts/create-user.ts, але по HTTP. companyId обов'язковий і явний
 // (спершу POST /companies), щоб typo в назві компанії не створило нового tenant-а
