@@ -1,4 +1,4 @@
-import { Fragment, FormEvent, useEffect, useState } from 'react';
+import { Fragment, FormEvent, useEffect, useRef, useState } from 'react';
 import {
   getPlatformKey,
   PlatformApiError,
@@ -8,6 +8,7 @@ import {
   setPlatformKey,
   WialonConfig,
 } from '../lib/platformApi';
+import { useDialog } from '../lib/dialog';
 
 const fieldLabel: React.CSSProperties = { fontSize: 11, color: 'var(--gray-500)', marginBottom: 4 };
 const formRow: React.CSSProperties = {
@@ -192,9 +193,14 @@ function wialonConfigToForm(config: WialonConfig): WialonForm {
 // в docs), форма Wialon — завжди повна заміна конфігу (PUT), бо ендпоінт не підтримує
 // частковий patch.
 function CompanyPanel({ company }: { company: PlatformCompany }) {
+  const dialog = useDialog();
   const [users, setUsers] = useState<PlatformUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
   const [usersError, setUsersError] = useState<string | null>(null);
+  // React.StrictMode монтує ефекти двічі в dev — без цього guard-а пізніший (правильний)
+  // запит (напр. після створення юзера) міг "перезаписатись" відповіддю раніше випущеного,
+  // але пізніше завершеного запиту (той самий з повторного монтування ефекту).
+  const usersRequestId = useRef(0);
 
   const [userForm, setUserForm] = useState<UserForm>(EMPTY_USER_FORM);
   const [userError, setUserError] = useState<string | null>(null);
@@ -202,12 +208,20 @@ function CompanyPanel({ company }: { company: PlatformCompany }) {
   const [userSaving, setUserSaving] = useState(false);
 
   function loadUsers() {
+    const requestId = ++usersRequestId.current;
     setUsersLoading(true);
     setUsersError(null);
     platformFetch<PlatformUser[]>(`/companies/${company.id}/users`)
-      .then(setUsers)
-      .catch((err) => setUsersError(err instanceof PlatformApiError ? err.message : 'Не вдалося завантажити користувачів'))
-      .finally(() => setUsersLoading(false));
+      .then((data) => {
+        if (requestId === usersRequestId.current) setUsers(data);
+      })
+      .catch((err) => {
+        if (requestId !== usersRequestId.current) return;
+        setUsersError(err instanceof PlatformApiError ? err.message : 'Не вдалося завантажити користувачів');
+      })
+      .finally(() => {
+        if (requestId === usersRequestId.current) setUsersLoading(false);
+      });
   }
 
   useEffect(loadUsers, [company.id]);
@@ -218,16 +232,20 @@ function CompanyPanel({ company }: { company: PlatformCompany }) {
   const [wialonError, setWialonError] = useState<string | null>(null);
   const [wialonSuccess, setWialonSuccess] = useState<string | null>(null);
   const [wialonSaving, setWialonSaving] = useState(false);
+  const wialonRequestId = useRef(0);
 
   useEffect(() => {
+    const requestId = ++wialonRequestId.current;
     setWialonLoading(true);
     setWialonError(null);
     platformFetch<WialonConfig>(`/companies/${company.id}/wialon-config`)
       .then((config) => {
+        if (requestId !== wialonRequestId.current) return;
         setWialonForm(wialonConfigToForm(config));
         setWialonConfigured(true);
       })
       .catch((err) => {
+        if (requestId !== wialonRequestId.current) return;
         if (err instanceof PlatformApiError && err.status === 404) {
           setWialonForm(EMPTY_WIALON_FORM);
           setWialonConfigured(false);
@@ -235,8 +253,20 @@ function CompanyPanel({ company }: { company: PlatformCompany }) {
           setWialonError(err instanceof PlatformApiError ? err.message : 'Не вдалося завантажити Wialon-конфіг');
         }
       })
-      .finally(() => setWialonLoading(false));
+      .finally(() => {
+        if (requestId === wialonRequestId.current) setWialonLoading(false);
+      });
   }, [company.id]);
+
+  async function handleDeleteUser(u: PlatformUser) {
+    if (!(await dialog.confirm(`Видалити користувача "${u.email}"?`, { danger: true, confirmText: 'Видалити' }))) return;
+    try {
+      await platformFetch(`/companies/${company.id}/users/${u.id}`, { method: 'DELETE' });
+      setUsers((prev) => prev.filter((x) => x.id !== u.id));
+    } catch (err) {
+      dialog.alertMsg(err instanceof PlatformApiError ? err.message : 'Не вдалося видалити користувача');
+    }
+  }
 
   async function handleUserSubmit(e: FormEvent) {
     e.preventDefault();
@@ -340,7 +370,7 @@ function CompanyPanel({ company }: { company: PlatformCompany }) {
                     <td style={{ fontSize: 12, color: 'var(--gray-500)' }}>
                       {new Date(u.createdAt).toLocaleDateString('uk-UA')}
                     </td>
-                    <td>
+                    <td style={{ display: 'flex', gap: 6 }}>
                       <button
                         className="btn"
                         style={{ padding: '5px 9px', fontSize: 11 }}
@@ -351,6 +381,13 @@ function CompanyPanel({ company }: { company: PlatformCompany }) {
                         }}
                       >
                         Скинути пароль/роль
+                      </button>
+                      <button
+                        className="btn"
+                        style={{ padding: '5px 9px', fontSize: 11, color: 'var(--red-600)' }}
+                        onClick={() => handleDeleteUser(u)}
+                      >
+                        Видалити
                       </button>
                     </td>
                   </tr>

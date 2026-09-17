@@ -119,6 +119,19 @@ platformRouter.get('/companies/:id/users', async (req, res) => {
   res.json(users);
 });
 
+// Видалення користувача. Прибираємо і його Notification (реальна FK-залежність — без
+// цього delete впав би з порушенням зовнішнього ключа); MaintenanceLog/DocumentLog
+// зберігають лише email як текст (не FK), тож історія ТО/документів лишається цілою.
+platformRouter.delete('/companies/:id/users/:userId', async (req, res) => {
+  const { id: companyId, userId } = req.params;
+  const user = await prisma.user.findFirst({ where: { id: userId, companyId } });
+  if (!user) return res.status(404).json({ error: 'Користувача не знайдено' });
+
+  await prisma.notification.deleteMany({ where: { userId } });
+  await prisma.user.delete({ where: { id: userId } });
+  res.status(204).end();
+});
+
 // Wialon-креденшели й налаштування депо компанії — те, що раніше було .env для окремого
 // деплою sync-service на клієнта. Тепер sync-service (один процес для всіх клієнтів)
 // читає ці рядки з БД у кожному циклі синхронізації.

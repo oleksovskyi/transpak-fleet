@@ -26,7 +26,10 @@ export async function platformFetch<T>(path: string, options: RequestInit = {}):
     ...options.headers,
   };
 
-  const res = await fetch(`/api/platform${path}`, { ...options, headers });
+  // no-store: без цього Chrome інколи віддає застарілу відповідь на GET з того самого
+  // URL (напр. список юзерів компанії) з HTTP-кешу замість повторного запиту після
+  // create/delete — застарілий список виглядав як "юзер не з'явився/не видалився".
+  const res = await fetch(`/api/platform${path}`, { ...options, headers, cache: 'no-store' });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new PlatformApiError(res.status, body.error ?? `Помилка запиту (${res.status})`);
