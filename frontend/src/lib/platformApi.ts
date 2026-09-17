@@ -45,7 +45,7 @@ export interface PlatformUser {
   id: string;
   email: string;
   role: 'admin' | 'viewer';
-  companyId: string;
+  createdAt: string;
 }
 
 export interface WialonConfig {

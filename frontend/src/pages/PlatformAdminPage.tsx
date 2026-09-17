@@ -4,6 +4,7 @@ import {
   PlatformApiError,
   PlatformCompany,
   platformFetch,
+  PlatformUser,
   setPlatformKey,
   WialonConfig,
 } from '../lib/platformApi';
@@ -123,10 +124,25 @@ function wialonConfigToForm(config: WialonConfig): WialonForm {
 // в docs), форма Wialon — завжди повна заміна конфігу (PUT), бо ендпоінт не підтримує
 // частковий patch.
 function CompanyPanel({ company }: { company: PlatformCompany }) {
+  const [users, setUsers] = useState<PlatformUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState(true);
+  const [usersError, setUsersError] = useState<string | null>(null);
+
   const [userForm, setUserForm] = useState<UserForm>(EMPTY_USER_FORM);
   const [userError, setUserError] = useState<string | null>(null);
   const [userSuccess, setUserSuccess] = useState<string | null>(null);
   const [userSaving, setUserSaving] = useState(false);
+
+  function loadUsers() {
+    setUsersLoading(true);
+    setUsersError(null);
+    platformFetch<PlatformUser[]>(`/companies/${company.id}/users`)
+      .then(setUsers)
+      .catch((err) => setUsersError(err instanceof PlatformApiError ? err.message : 'Не вдалося завантажити користувачів'))
+      .finally(() => setUsersLoading(false));
+  }
+
+  useEffect(loadUsers, [company.id]);
 
   const [wialonForm, setWialonForm] = useState<WialonForm>(EMPTY_WIALON_FORM);
   const [wialonLoading, setWialonLoading] = useState(true);
@@ -170,6 +186,7 @@ function CompanyPanel({ company }: { company: PlatformCompany }) {
       });
       setUserSuccess(`Готово: ${userForm.email.trim()} → ${userForm.role}`);
       setUserForm(EMPTY_USER_FORM);
+      loadUsers();
     } catch (err) {
       setUserError(err instanceof PlatformApiError ? err.message : 'Не вдалося зберегти користувача');
     } finally {
@@ -224,6 +241,58 @@ function CompanyPanel({ company }: { company: PlatformCompany }) {
 
   return (
     <div style={{ padding: '4px 4px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
+        <div className="card-title" style={{ fontSize: 13 }}>Користувачі компанії</div>
+        <div className="card-title-sub">
+          Пароль ніде не зберігається у відновлюваному вигляді (лише хеш) — «скинути» означає задати новий, не побачити старий
+        </div>
+
+        {usersError && <div className="empty">{usersError}</div>}
+        {!usersError && usersLoading && <div className="empty">Завантаження…</div>}
+        {!usersError && !usersLoading && (
+          <table style={{ marginTop: 8 }}>
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Роль</th>
+                <th>Створено</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="empty">Ще немає жодного користувача — додайте нижче</td>
+                </tr>
+              ) : (
+                users.map((u) => (
+                  <tr key={u.id}>
+                    <td>{u.email}</td>
+                    <td>{u.role}</td>
+                    <td style={{ fontSize: 12, color: 'var(--gray-500)' }}>
+                      {new Date(u.createdAt).toLocaleDateString('uk-UA')}
+                    </td>
+                    <td>
+                      <button
+                        className="btn"
+                        style={{ padding: '5px 9px', fontSize: 11 }}
+                        onClick={() => {
+                          setUserForm({ email: u.email, password: '', role: u.role });
+                          setUserSuccess(null);
+                          setUserError(null);
+                        }}
+                      >
+                        Скинути пароль/роль
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        )}
+      </div>
+
       <div>
         <div className="card-title" style={{ fontSize: 13 }}>Додати/оновити користувача</div>
         <div className="card-title-sub">

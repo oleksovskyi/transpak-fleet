@@ -68,6 +68,21 @@ platformRouter.post('/users', async (req, res) => {
   res.status(201).json({ id: user.id, email: user.email, role: user.role, companyId: user.companyId });
 });
 
+// Список користувачів компанії — email/роль/дата створення. passwordHash навмисно не
+// повертається: пароль ніде не зберігається у відновлюваному вигляді, лише bcrypt-хеш —
+// показати "поточний пароль" фізично неможливо, тільше можна задати новий (POST /users).
+platformRouter.get('/companies/:id/users', async (req, res) => {
+  const company = await prisma.company.findUnique({ where: { id: req.params.id } });
+  if (!company) return res.status(404).json({ error: 'Компанію не знайдено' });
+
+  const users = await prisma.user.findMany({
+    where: { companyId: req.params.id },
+    select: { id: true, email: true, role: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  });
+  res.json(users);
+});
+
 // Wialon-креденшели й налаштування депо компанії — те, що раніше було .env для окремого
 // деплою sync-service на клієнта. Тепер sync-service (один процес для всіх клієнтів)
 // читає ці рядки з БД у кожному циклі синхронізації.
