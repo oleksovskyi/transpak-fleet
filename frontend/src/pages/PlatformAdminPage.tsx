@@ -54,13 +54,15 @@ function PlatformKeyGate({ onUnlocked }: { onUnlocked: () => void }) {
             <div className="brand-sub">Онбординг клієнтів</div>
           </div>
         </div>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} autoComplete="off">
           {error && <div className="login-error">{error}</div>}
           <div className="login-field">
             <label htmlFor="platform-key">Платформний ключ (X-Platform-Key)</label>
             <input
               id="platform-key"
+              name="platform-admin-key"
               type="password"
+              autoComplete="new-password"
               value={key}
               onChange={(e) => setKey(e.target.value)}
               required
@@ -227,7 +229,7 @@ function CompanyPanel({ company }: { company: PlatformCompany }) {
         <div className="card-title-sub">
           Той самий email — оновить пароль і роль існуючого користувача, новий — створить логін для «{company.name}»
         </div>
-        <form onSubmit={handleUserSubmit} style={formRow}>
+        <form onSubmit={handleUserSubmit} style={formRow} autoComplete="off">
           {userError && <div className="login-error" style={{ width: '100%' }}>{userError}</div>}
           {userSuccess && (
             <div style={{ width: '100%', fontSize: 12, color: 'var(--green-600, #16a34a)' }}>{userSuccess}</div>
@@ -236,6 +238,8 @@ function CompanyPanel({ company }: { company: PlatformCompany }) {
             <div style={fieldLabel}>Email</div>
             <input
               type="email"
+              name={`new-user-email-${company.id}`}
+              autoComplete="off"
               value={userForm.email}
               onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
               placeholder="admin@client.ua"
@@ -246,6 +250,8 @@ function CompanyPanel({ company }: { company: PlatformCompany }) {
             <div style={fieldLabel}>Пароль</div>
             <input
               type="password"
+              name={`new-user-password-${company.id}`}
+              autoComplete="new-password"
               value={userForm.password}
               onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
               placeholder="щонайменше 8 символів"
@@ -280,7 +286,7 @@ function CompanyPanel({ company }: { company: PlatformCompany }) {
         {wialonLoading && <div className="empty">Завантаження…</div>}
 
         {!wialonLoading && (
-          <form onSubmit={handleWialonSubmit} style={formRow}>
+          <form onSubmit={handleWialonSubmit} style={formRow} autoComplete="off">
             {wialonError && <div className="login-error" style={{ width: '100%' }}>{wialonError}</div>}
             {wialonSuccess && (
               <div style={{ width: '100%', fontSize: 12, color: 'var(--green-600, #16a34a)' }}>{wialonSuccess}</div>
@@ -289,6 +295,8 @@ function CompanyPanel({ company }: { company: PlatformCompany }) {
               <div style={fieldLabel}>Wialon token</div>
               <input
                 type="password"
+                name={`wialon-token-${company.id}`}
+                autoComplete="new-password"
                 value={wialonForm.wialonToken}
                 onChange={(e) => setWialonForm({ ...wialonForm, wialonToken: e.target.value })}
                 style={{ width: 260 }}
